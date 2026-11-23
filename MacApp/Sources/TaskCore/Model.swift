@@ -27,11 +27,19 @@ public struct TaskGroup: Codable, Equatable, Hashable {
         self.name = name
     }
 }
+// Keep the first spelling and order when a name is entered more than once.
+public func uniqueNames(_ values: [String]) -> [String] {
+    var seen = Set<String>()
+    return values.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty && seen.insert($0.lowercased()).inserted }
+}
+
 public struct Outcome: Codable, Identifiable, Equatable {
     public var id = 0
     public var version = 0
     public var name = ""
     public var group = TaskGroup()
+    public var responsiblePeople: [String] = []
     public var dueDate = ""
     public var priority = Priority.medium
     public init() {}

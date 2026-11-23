@@ -84,6 +84,7 @@ enum OutcomeScope: Equatable {
     @Published var outcomes: [Outcome] = []
     @Published var outcomeScope: OutcomeScope = .overview
     @Published var editOutcome: Outcome?
+    @Published var pendingOutcomeDelete: Outcome?
     @Published var setupTask: WorkItem?
     @Published var results: [BrainResult] = []
     @Published var proposals: [Proposal] = []
@@ -139,6 +140,17 @@ enum OutcomeScope: Equatable {
             return (left.updatedAt,left.id) > (right.updatedAt,right.id)
         }
     }
+    var knownPeople: [String] {
+        outcomes.flatMap(\.responsiblePeople) + tasks.flatMap { [$0.owner] + $0.collaborators + $0.actions.map(\.assignee) }
+    }
+    func deleteOutcome(_ outcome: Outcome) {
+        do {
+            try reviewStore().deleteOutcome(outcome)
+            showOutcome(.overview)
+        } catch { self.error = error.localizedDescription }
+        refresh()
+    }
+
     var selectedOutcome: Outcome? { outcomes.first { $0.id == outcomeScope.id } }
     func showOutcome(_ scope: OutcomeScope) {
         queue = .outcomes

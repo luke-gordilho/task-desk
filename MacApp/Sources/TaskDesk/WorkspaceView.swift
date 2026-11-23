@@ -34,7 +34,10 @@ struct WorkspaceView: View {
                         HStack {
                             Button { desk.showOutcome(.overview) } label: { Label("Outcomes", systemImage: "chevron.left") }
                             Spacer()
-                            if let outcome = desk.selectedOutcome { Button("Edit outcome") { desk.editOutcome = outcome } }
+                            if let outcome = desk.selectedOutcome {
+                                Button("Edit outcome") { desk.editOutcome = outcome }
+                                Button("Delete outcome…", role: .destructive) { desk.pendingOutcomeDelete = outcome }
+                            }
                         }.buttonStyle(.plain).padding(.horizontal, 22).padding(.top, 16)
                     }
                     HStack {
@@ -46,6 +49,10 @@ struct WorkspaceView: View {
                         Button { desk.newTask() } label: { Label("New task", systemImage: "plus") }
                             .buttonStyle(PrimaryButton())
                     }.padding(.horizontal, 22).padding(.top, 20)
+                    if desk.queue == .outcomes, let outcome = desk.selectedOutcome {
+                        Text("Responsible · " + (outcome.responsiblePeople.isEmpty ? "Unassigned" : outcome.responsibleNames))
+                            .foregroundStyle(Ink.muted).padding(.horizontal, 22).padding(.top, 4)
+                    }
                     controls.padding(.horizontal, 22).padding(.vertical, 14)
                     Divider()
                     taskTable
@@ -63,6 +70,12 @@ struct WorkspaceView: View {
         }
         .sheet(item: $desk.setupTask) { item in ChatSetupView(task: item).environmentObject(desk) }
         .sheet(item: $desk.edit, onDismiss: { desk.refresh() }) { TaskEditor(draft: $0).environmentObject(desk).preferredColorScheme(appearance.scheme) }
+        .alert("Delete outcome?", isPresented: Binding(get: { desk.pendingOutcomeDelete != nil }, set: { if !$0 { desk.pendingOutcomeDelete = nil } }), presenting: desk.pendingOutcomeDelete) { outcome in
+            Button("Cancel", role: .cancel) {}
+            Button("Delete outcome", role: .destructive) { desk.deleteOutcome(outcome) }
+        } message: { outcome in
+            Text("Delete “\(outcome.name)”? Its tasks will move to Unassigned tasks and keep their history.")
+        }
         .alert("Delete task?", isPresented: Binding(get: { desk.pendingDelete != nil }, set: { if !$0 { desk.pendingDelete = nil } }), presenting: desk.pendingDelete) { item in
             Button("Cancel", role: .cancel) {}
             Button("Delete task", role: .destructive) { desk.delete(item) }

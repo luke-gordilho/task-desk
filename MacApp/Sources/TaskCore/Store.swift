@@ -18,7 +18,9 @@ public final class TaskStore {
         PRAGMA journal_mode=WAL;
         PRAGMA foreign_keys=ON;
         CREATE TABLE IF NOT EXISTS outcomes(id INTEGER PRIMARY KEY, version INTEGER NOT NULL, name TEXT NOT NULL,
-            group_kind TEXT NOT NULL, group_name TEXT NOT NULL, due_date TEXT NOT NULL, priority TEXT NOT NULL);
+            group_kind TEXT NOT NULL, group_name TEXT NOT NULL, due_date TEXT NOT NULL, priority TEXT NOT NULL,
+            responsible_people TEXT NOT NULL DEFAULT '[]');
+        CREATE TABLE IF NOT EXISTS retired_outcome_ids(id INTEGER PRIMARY KEY);
         CREATE TABLE IF NOT EXISTS tasks(id INTEGER PRIMARY KEY, version INTEGER NOT NULL, body TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS changes(id INTEGER PRIMARY KEY, task_id INTEGER NOT NULL REFERENCES tasks(id),
             stamp TEXT NOT NULL, actor TEXT NOT NULL, summary TEXT NOT NULL);
@@ -38,6 +40,14 @@ public final class TaskStore {
             UNIQUE(task_id,event_key), UNIQUE(task_id,note));
         CREATE INDEX IF NOT EXISTS changes_task ON changes(task_id,id);
         """)
+        // Older installs already have an outcomes table. Check under a write lock
+        // because the desktop app and taskctl can both open it on first use.
+        try transaction {
+            let columns = try rows("PRAGMA table_info(outcomes)", [], { field($0, 1) })
+            if !columns.contains("responsible_people") {
+                try exec("ALTER TABLE outcomes ADD COLUMN responsible_people TEXT NOT NULL DEFAULT '[]'")
+            }
+        }
     }
     deinit { sqlite3_close(db) }
     private func failure() -> DeskError { DeskError(String(cString: sqlite3_errmsg(db))) }
@@ -460,7 +470,7 @@ extension TaskStore {
 }
 
 extension TaskStore {
-    private static let outcomeQuery = "SELECT id,version,name,group_kind,group_name,due_date,priority FROM outcomes"
+    private static let outcomeQuery = "SELECT id,version,name,group_kind,group_name,due_date,priority,responsible_people FROM outcomes"
 
     private func decodeOutcome(_ q: OpaquePointer) throws -> Outcome {
         guard let kind = GroupKind(rawValue: field(q,3)), let priority = Priority(rawValue: field(q,6)) else {
@@ -473,6 +483,7 @@ extension TaskStore {
         item.group = TaskGroup(kind: kind, name: field(q,4))
         item.dueDate = field(q,5)
         item.priority = priority
+        item.responsiblePeople = try decoder.decode([String].self, from: Data(field(q, 7).utf8))
         return item
     }
 
@@ -487,19 +498,42 @@ extension TaskStore {
         return value
     }
 
+    public func deleteOutcome(_ expected: Outcome) throws {
+        try transaction {
+            let current = try outcome(expected.id)
+            guard current.version == expected.version else {
+                throw DeskError("The outcome changed. Review the latest version before deleting it.")
+            }
+            let key = [String(expected.id)]
+            let members = try rows("SELECT id,version,body FROM tasks WHERE json_extract(body,'$.outcomeID')=CAST(? AS INTEGER)", key, decode)
+            for var task in members {
+                task.outcomeID = nil
+                _ = try persist(task, actor: "Luke")
+            }
+            try write("INSERT INTO retired_outcome_ids(id) VALUES(?)", key)
+            try write("DELETE FROM outcomes WHERE id=?", key)
+        }
+    }
+
     public func saveOutcome(_ draft: Outcome, adding: [WorkItem] = [], removing: [WorkItem] = []) throws -> Outcome {
         try transaction {
             let name = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
             let project = draft.group.name.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !name.isEmpty, !project.isEmpty else { throw DeskError("Enter an outcome name and a project or customer.") }
             try validateDate(draft.dueDate)
-            let values = [name, draft.group.kind.rawValue, project, draft.dueDate, draft.priority.rawValue]
+            let people = String(decoding: try encoder.encode(uniqueNames(draft.responsiblePeople)), as: UTF8.self)
+            let values = [name, draft.group.kind.rawValue, project, draft.dueDate, draft.priority.rawValue, people]
             let id: Int
             if draft.id == 0 {
-                try write("INSERT INTO outcomes(name,group_kind,group_name,due_date,priority,version) VALUES(?,?,?,?,?,1)", values)
+                // Old Inbox drafts can still reference a deleted outcome ID.
+                try write("""
+                    INSERT INTO outcomes(id,name,group_kind,group_name,due_date,priority,responsible_people,version)
+                    SELECT MAX(COALESCE((SELECT MAX(id) FROM outcomes),0),
+                               COALESCE((SELECT MAX(id) FROM retired_outcome_ids),0)) + 1,?,?,?,?,?,?,1
+                    """, values)
                 id = Int(sqlite3_last_insert_rowid(db))
             } else {
-                try write("UPDATE outcomes SET name=?,group_kind=?,group_name=?,due_date=?,priority=?,version=version+1 WHERE id=? AND version=?",
+                try write("UPDATE outcomes SET name=?,group_kind=?,group_name=?,due_date=?,priority=?,responsible_people=?,version=version+1 WHERE id=? AND version=?",
                           values + [String(draft.id), String(draft.version)])
                 guard sqlite3_changes(db) == 1 else { throw DeskError("The outcome changed. Reopen it before saving.") }
                 id = draft.id

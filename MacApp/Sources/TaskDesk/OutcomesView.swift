@@ -5,6 +5,7 @@ private typealias OutcomeState<T> = SwiftUI.State<T>
 
 extension Outcome {
     fileprivate var groupName: String { group.name }
+    var responsibleNames: String { responsiblePeople.joined(separator: ", ") }
     fileprivate var priorityRank: Int { Priority.allCases.firstIndex(of: priority) ?? 0 }
 }
 
@@ -27,6 +28,10 @@ struct OutcomesView: View {
                     Button(outcome.name) { desk.showOutcome(.outcome(outcome.id)) }.buttonStyle(.plain)
                 }.width(min: 130, ideal: 235)
                 TableColumn("Project / Customer", value: \.groupName)
+                TableColumn("Responsible", value: \.responsibleNames) { outcome in
+                    Text(outcome.responsibleNames.isEmpty ? "—" : outcome.responsibleNames)
+                        .lineLimit(1).help(outcome.responsibleNames)
+                }
                 TableColumn("Due date", value: \.dueDate)
                 TableColumn("Priority", value: \.priorityRank) { Text($0.priority.rawValue) }
                 TableColumn("Tasks done") { outcome in
@@ -38,6 +43,7 @@ struct OutcomesView: View {
                 if let value = desk.outcomes.first(where: { ids.contains($0.id) }) {
                     Button("Open outcome") { desk.showOutcome(.outcome(value.id)) }
                     Button("Edit outcome") { desk.editOutcome = value }
+                    Button("Delete outcome…", role: .destructive) { desk.pendingOutcomeDelete = value }
                 }
             } primaryAction: { ids in if let id = ids.first { desk.showOutcome(.outcome(id)) } }
             .overlay {
@@ -52,6 +58,7 @@ struct OutcomeEditor: View {
     @Environment(\.dismiss) private var dismiss
     @OutcomeState private var draft: Outcome
     @OutcomeState private var selected: Set<Int>
+    @OutcomeState private var people: String
     @OutcomeState private var search = ""
     @OutcomeState private var error = ""
     private let initial: Set<Int>
@@ -62,6 +69,7 @@ struct OutcomeEditor: View {
         initial = Set(tasks.filter { $0.outcomeID == outcome.id }.map(\.id))
         _selected = State(initialValue: initial)
         _draft = State(initialValue: outcome)
+        _people = State(initialValue: outcome.responsibleNames)
     }
 
     var body: some View {
@@ -82,6 +90,11 @@ struct OutcomeEditor: View {
                             }
                         } label: { Image(systemName: "chevron.down.circle") }.fixedSize().help("Choose a saved project or customer")
                     }
+                }
+                GridRow {
+                    Text("Responsible")
+                    PeopleField(label: "Responsible people", text: $people, suggestions: desk.knownPeople)
+                        .labelsHidden()
                 }
                 GridRow {
                     Text("Priority")
@@ -114,6 +127,7 @@ struct OutcomeEditor: View {
                     do {
                         let added = selected.subtracting(initial)
                         let removed = initial.subtracting(selected)
+                        draft.responsiblePeople = uniqueNames(people.components(separatedBy: ","))
                         let saved = try desk.reviewStore().saveOutcome(draft,
                             adding: tasks.filter { added.contains($0.id) },
                             removing: tasks.filter { removed.contains($0.id) })

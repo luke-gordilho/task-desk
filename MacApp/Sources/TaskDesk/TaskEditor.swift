@@ -20,19 +20,6 @@ struct TaskEditor: View {
         _draft = State(initialValue: draft)
         _people = State(initialValue: draft.collaborators.joined(separator: ", "))
     }
-    // Preserve the spelling and order of the first occurrence.
-    private func uniqueNames(_ values: [String]) -> [String] {
-        var seen = Set<String>()
-        return values.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty && seen.insert($0.lowercased()).inserted }
-    }
-    private var selectedPeople: [String] {
-        uniqueNames(people.components(separatedBy: ","))
-    }
-    private var collaboratorChoices: [String] {
-        uniqueNames(selectedPeople + desk.tasks.flatMap(\.collaborators))
-            .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
-    }
     private var groupChoices: [String] {
         uniqueNames(desk.tasks.filter { $0.group.kind == draft.group.kind }.map(\.group.name))
             .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
@@ -102,6 +89,9 @@ struct TaskEditor: View {
                     Section {
                         Picker("Outcome", selection: $draft.outcomeID) {
                             Text("Unassigned").tag(nil as Int?)
+                            if let id = draft.outcomeID, !desk.outcomes.contains(where: { $0.id == id }) {
+                                Text("Deleted outcome").tag(Optional(id))
+                            }
                             ForEach(desk.outcomes) { Text($0.displayName).tag(Optional($0.id)) }
                         }
                         Picker("Status", selection: $draft.status) { ForEach(Status.allCases, id: \.self) { Text($0.rawValue) } }
@@ -109,19 +99,7 @@ struct TaskEditor: View {
                     }
                     Section("People and work") {
                         TextField("Owner", text: $draft.owner)
-                        HStack {
-                            TextField("Collaborators", text: $people, prompt: Text("Names separated by commas"))
-                            selectionMenu("Choose collaborators", isEmpty: collaboratorChoices.isEmpty) {
-                                ForEach(collaboratorChoices, id: \.self) { name in
-                                    let isSelected = selectedPeople.contains { $0.caseInsensitiveCompare(name) == .orderedSame }
-                                    Toggle(name, isOn: Binding(get: { isSelected }, set: { include in
-                                        var names = selectedPeople.filter { $0.caseInsensitiveCompare(name) != .orderedSame }
-                                        if include { names.append(name) }
-                                        people = names.joined(separator: ", ")
-                                    }))
-                                }
-                            }
-                        }
+                        PeopleField(label: "Collaborators", text: $people, suggestions: desk.knownPeople)
                         Picker("Task for", selection: $draft.group.kind) {
                             ForEach(GroupKind.allCases, id: \.self) { Text($0.rawValue).tag($0) }
                         }.pickerStyle(.segmented)
@@ -147,7 +125,7 @@ struct TaskEditor: View {
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button(proposalSave != nil ? "Save proposal" : draft.id == 0 ? "Create task" : "Save changes") {
                     do {
-                        draft.collaborators = selectedPeople
+                        draft.collaborators = uniqueNames(people.components(separatedBy: ","))
                         if let proposalSave { try proposalSave(draft) } else { try desk.save(draft) }
                         dismiss()
                     } catch { self.error = error.localizedDescription }
@@ -166,6 +144,31 @@ struct TaskEditor: View {
         }
     }
 }
+struct PeopleField: View {
+    let label: String
+    @Binding var text: String
+    let suggestions: [String]
+
+    var body: some View {
+        let selected = uniqueNames(text.components(separatedBy: ","))
+        let choices = uniqueNames(selected + suggestions).sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+        HStack {
+            TextField(label, text: $text, prompt: Text("Names separated by commas"))
+            Menu {
+                ForEach(choices, id: \.self) { name in
+                    Toggle(name, isOn: Binding(get: { selected.contains(name) }, set: { include in
+                        var names = selected.filter { $0 != name }
+                        if include { names.append(name) }
+                        text = names.joined(separator: ", ")
+                    }))
+                }
+            } label: { Image(systemName: "chevron.down.circle") }
+                .menuIndicator(.hidden).fixedSize().disabled(choices.isEmpty)
+                .accessibilityLabel("Choose " + label.lowercased()).help("Choose " + label.lowercased())
+        }
+    }
+}
+
 struct OptionalDate: View {
     let label: String
     @Binding var value: String

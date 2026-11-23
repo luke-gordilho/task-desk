@@ -6,6 +6,8 @@ Choose **Create task with AI** beside **New task** to open an editable prompt in
 
 Open **Outcomes** in the sidebar to organize tasks around a shared result. Choose **New outcome**, enter a name, choose or enter its project or customer, pick a due date on the calendar, and set its priority. Select any existing tasks that contribute to it. Opening an outcome shows all its tasks, including completed work. Use **New task** there to preselect the outcome and project, or use **Edit outcome** to move several tasks in one save. A task can belong to one outcome at a time. The **Unassigned tasks** view includes tasks created before outcomes were added.
 
+Use **Responsible** when creating or editing an outcome to enter one or more names separated by commas, or choose people from the dropdown. These names appear in the Outcomes table and on the open outcome. To delete an outcome, open it and choose **Delete outcome…**, or use the row’s context menu. Confirming moves its tasks to **Unassigned tasks** and preserves their history.
+
 Agents can list outcome IDs with `taskctl outcomes` and propose a task assignment through the Inbox using `outcomeID`. A JSON null removes the assignment. Each task retains its own priority and dates.
 
 Choose **Project** for internal work or **Customer** for customer work, then enter its name. The table shows the task, its project or customer, status, priority, next assignee, and due date. Click a title for the full task. Use **Filter** to combine criteria, and click a column header or use **Sort** to order the results. Choose **System**, **Light**, or **Dark** in the sidebar.
