@@ -4,6 +4,8 @@ Open **Task Desk** in your Mac’s user Applications folder. Press **⌘N** to a
 
 Choose **Create task with AI** beside **New task** to open an editable prompt in Codex. Send the prompt, describe the task, and tell Codex when to save it. Review the draft in the Inbox. Approve it and choose Apply to tasks to create the live task.
 
+Task Desk opens to **Active tasks**. Task lists group matching tasks under their outcome, with **Unassigned tasks** last. Sorting orders tasks within each group. To switch to a flat table, turn off **Sort → Group by outcome**. Task Desk remembers your choice.
+
 Open **Outcomes** in the sidebar to organize tasks around a shared result. Choose **New outcome**, enter a name, choose or enter its project or customer, pick a due date on the calendar, and set its priority. Select any existing tasks that contribute to it. Opening an outcome shows all its tasks, including completed work. Use **New task** there to preselect the outcome and project, or use **Edit outcome** to move several tasks in one save. A task can belong to one outcome at a time. The **Unassigned tasks** view includes tasks created before outcomes were added.
 
 Use **Responsible** when creating or editing an outcome to enter one or more names separated by commas, or choose people from the dropdown. These names appear in the Outcomes table and on the open outcome. To delete an outcome, open it and choose **Delete outcome…**, or use the row’s context menu. Confirming moves its tasks to **Unassigned tasks** and preserves their history.

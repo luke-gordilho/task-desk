@@ -102,7 +102,7 @@ enum OutcomeScope: Equatable {
         DeskSort.allCases.first { $0.comparator.keyPath == sortOrder.first?.keyPath } ?? .priority
     }
     private var store: TaskStore?
-    init() { refresh(); if !outcomes.isEmpty { queue = .outcomes } }
+    init() { refresh() }
     func refresh() {
         do {
             if store == nil { store = try TaskStore() }

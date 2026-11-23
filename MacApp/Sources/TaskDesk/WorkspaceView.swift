@@ -6,6 +6,7 @@ private typealias ViewState<Value> = SwiftUI.State<Value>
 struct WorkspaceView: View {
     @EnvironmentObject var desk: Desk
     @AppStorage("appearance") var appearance: Appearance = .system
+    @AppStorage("groupTasksByOutcome") private var groupTasksByOutcome = true
     @ViewState private var showFilters = false
     @FocusState private var searching: Bool
     private static let logo = Bundle.main.url(forResource: "Wordmark", withExtension: "png").flatMap(NSImage.init(contentsOf:))
@@ -150,6 +151,10 @@ struct WorkspaceView: View {
                 Label(desk.filters.count == 0 ? "Filter" : "Filter (\(desk.filters.count))", systemImage: "line.3.horizontal.decrease.circle")
             }.popover(isPresented: $showFilters) { FilterPanel().environmentObject(desk) }
             Menu {
+                if desk.queue != .outcomes {
+                    Toggle("Group by outcome", isOn: $groupTasksByOutcome)
+                    Divider()
+                }
                 Picker("Sort by", selection: Binding(get: { desk.sortField }, set: { desk.sortOrder = [$0.comparator] })) {
                     ForEach(DeskSort.allCases, id: \.self) { Text($0.rawValue) }
                 }.pickerStyle(.inline)
@@ -163,7 +168,8 @@ struct WorkspaceView: View {
         }
     }
     private var taskTable: some View {
-        Table(desk.visible, selection: $desk.selection, sortOrder: $desk.sortOrder) {
+        let tasks = desk.visible
+        return Table(of: WorkItem.self, selection: $desk.selection, sortOrder: $desk.sortOrder) {
             TableColumn("Task", value: \.title) { item in
                 Button { desk.selection = item.id; desk.detailID = item.id } label: {
                     Text(item.title).fontWeight(.medium).lineLimit(1)
@@ -185,6 +191,16 @@ struct WorkspaceView: View {
             TableColumn("Due date", value: \.dueSort) { item in
                 Text(item.dueDate.isEmpty ? "—" : item.dueDate).monospacedDigit()
             }.width(min: 85, ideal: 95)
+        } rows: {
+            if groupTasksByOutcome && desk.queue != .outcomes {
+                ForEach(OutcomeTaskSection.group(tasks, by: desk.outcomes)) { section in
+                    Section(section.title) {
+                        ForEach(section.tasks) { TableRow($0) }
+                    }
+                }
+            } else {
+                ForEach(tasks) { TableRow($0) }
+            }
         }
         .contextMenu(forSelectionType: Int.self) { ids in
             if let id = ids.first, let item = desk.tasks.first(where: { $0.id == id }) {
@@ -198,7 +214,7 @@ struct WorkspaceView: View {
         .alternatingRowBackgrounds(.disabled)
         .scrollContentBackground(.hidden).background(Ink.surface)
         .overlay {
-            if desk.visible.isEmpty {
+            if tasks.isEmpty {
                 VStack(spacing: 12) {
                     Image(systemName: desk.tasks.isEmpty ? "tray" : "magnifyingglass").font(.largeTitle).foregroundStyle(Ink.muted)
                     Text(desk.tasks.isEmpty ? "Create your first task" : "No tasks in this view").font(.headline)
@@ -213,6 +229,27 @@ struct WorkspaceView: View {
         switch status { case .done: return Ink.success; case .blocked: return Ink.warning; case .active: return Ink.info; case .todo: return Ink.muted }
     }
 }
+private struct OutcomeTaskSection: Identifiable {
+    let id: Int?
+    let title: String
+    let tasks: [WorkItem]
+
+    static func group(_ tasks: [WorkItem], by outcomes: [Outcome]) -> [Self] {
+        let knownIDs = Set(outcomes.map(\.id))
+        let members = Dictionary(grouping: tasks) { task in
+            task.outcomeID.flatMap { knownIDs.contains($0) ? $0 : nil }
+        }
+        var sections = outcomes.compactMap { outcome -> Self? in
+            guard let tasks = members[outcome.id] else { return nil }
+            return Self(id: outcome.id, title: outcome.displayName, tasks: tasks)
+        }
+        if let tasks = members[nil] {
+            sections.append(Self(id: nil, title: "Unassigned tasks", tasks: tasks))
+        }
+        return sections
+    }
+}
+
 private struct FilterPanel: View {
     @EnvironmentObject var desk: Desk
     private var groups: [TaskGroup] {
