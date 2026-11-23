@@ -28,8 +28,8 @@ public struct Proposal: Codable, Identifiable {
         }
         let original = try fields(base), suggested = try fields(draft)
         var result = try fields(current)
-        for (key, value) in suggested where value != original[key] && original[key] == result[key] {
-            result[key] = value
+        for key in Set(original.keys).union(suggested.keys) where suggested[key] != original[key] && original[key] == result[key] {
+            result[key] = suggested[key]
         }
         return try JSONDecoder().decode(WorkItem.self, from: JSONSerialization.data(withJSONObject: result))
     }

@@ -17,6 +17,8 @@ public final class TaskStore {
         try exec("""
         PRAGMA journal_mode=WAL;
         PRAGMA foreign_keys=ON;
+        CREATE TABLE IF NOT EXISTS outcomes(id INTEGER PRIMARY KEY, version INTEGER NOT NULL, name TEXT NOT NULL,
+            group_kind TEXT NOT NULL, group_name TEXT NOT NULL, due_date TEXT NOT NULL, priority TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS tasks(id INTEGER PRIMARY KEY, version INTEGER NOT NULL, body TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS changes(id INTEGER PRIMARY KEY, task_id INTEGER NOT NULL REFERENCES tasks(id),
             stamp TEXT NOT NULL, actor TEXT NOT NULL, summary TEXT NOT NULL);
@@ -169,22 +171,24 @@ public final class TaskStore {
         item.title = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
         item.group.name = item.group.name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !item.title.isEmpty else { throw DeskError("Enter a title for the task.") }
+        if let id = item.outcomeID { _ = try outcome(id) }
         for action in item.actions where action.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             throw DeskError("Enter a description for each next action.")
         }
         guard Set(item.actions.map(\.id)).count == item.actions.count else { throw DeskError("Duplicate action ID.") }
-        let dateFormat = DateFormatter()
-        dateFormat.locale = Locale(identifier: "en_US_POSIX")
-        dateFormat.dateFormat = "yyyy-MM-dd"
-        for date in [item.dueDate, item.followUpDate] where !date.isEmpty {
-            guard let value = dateFormat.date(from: date), dateFormat.string(from: value) == date else {
-                throw DeskError("Use YYYY-MM-DD for dates.")
-            }
+        for date in [item.dueDate, item.followUpDate] where !date.isEmpty { try validateDate(date) }
+    }
+    private func validateDate(_ date: String) throws {
+        let format = DateFormatter()
+        format.locale = Locale(identifier: "en_US_POSIX")
+        format.dateFormat = "yyyy-MM-dd"
+        guard let value = format.date(from: date), format.string(from: value) == date else {
+            throw DeskError("Choose a valid calendar date.")
         }
     }
     private static func changeSummary(from old: WorkItem, to new: WorkItem) -> String {
         let fields: [(String, Bool)] = [
-            ("title", old.title != new.title), ("project or customer", old.group != new.group), ("owner", old.owner != new.owner),
+            ("outcome", old.outcomeID != new.outcomeID), ("title", old.title != new.title), ("project or customer", old.group != new.group), ("owner", old.owner != new.owner),
             ("collaborators", old.collaborators != new.collaborators), ("status to " + new.status.rawValue, old.status != new.status),
             ("priority", old.priority != new.priority), ("due date", old.dueDate != new.dueDate),
             ("follow-up", old.followUpDate != new.followUpDate), ("next actions", old.actions != new.actions),
@@ -452,5 +456,65 @@ extension TaskStore {
     }
     public func markQueued(_ id: Int, event: UUID) throws {
         try write("UPDATE brain_dispatches SET state='queued' WHERE task_id=? AND event_key=?", [String(id),event.uuidString])
+    }
+}
+
+extension TaskStore {
+    private static let outcomeQuery = "SELECT id,version,name,group_kind,group_name,due_date,priority FROM outcomes"
+
+    private func decodeOutcome(_ q: OpaquePointer) throws -> Outcome {
+        guard let kind = GroupKind(rawValue: field(q,3)), let priority = Priority(rawValue: field(q,6)) else {
+            throw DeskError("Could not read outcome project or priority.")
+        }
+        var item = Outcome()
+        item.id = Int(sqlite3_column_int64(q,0))
+        item.version = Int(sqlite3_column_int64(q,1))
+        item.name = field(q,2)
+        item.group = TaskGroup(kind: kind, name: field(q,4))
+        item.dueDate = field(q,5)
+        item.priority = priority
+        return item
+    }
+
+    public func outcomes() throws -> [Outcome] {
+        try rows(Self.outcomeQuery + " ORDER BY due_date,name COLLATE NOCASE,id", [], decodeOutcome)
+    }
+
+    public func outcome(_ id: Int) throws -> Outcome {
+        guard let value = try rows(Self.outcomeQuery + " WHERE id=?", [String(id)], decodeOutcome).first else {
+            throw DeskError("Outcome \(id) does not exist.")
+        }
+        return value
+    }
+
+    public func saveOutcome(_ draft: Outcome, adding: [WorkItem] = [], removing: [WorkItem] = []) throws -> Outcome {
+        try transaction {
+            let name = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            let project = draft.group.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty, !project.isEmpty else { throw DeskError("Enter an outcome name and a project or customer.") }
+            try validateDate(draft.dueDate)
+            let values = [name, draft.group.kind.rawValue, project, draft.dueDate, draft.priority.rawValue]
+            let id: Int
+            if draft.id == 0 {
+                try write("INSERT INTO outcomes(name,group_kind,group_name,due_date,priority,version) VALUES(?,?,?,?,?,1)", values)
+                id = Int(sqlite3_last_insert_rowid(db))
+            } else {
+                try write("UPDATE outcomes SET name=?,group_kind=?,group_name=?,due_date=?,priority=?,version=version+1 WHERE id=? AND version=?",
+                          values + [String(draft.id), String(draft.version)])
+                guard sqlite3_changes(db) == 1 else { throw DeskError("The outcome changed. Reopen it before saving.") }
+                id = draft.id
+            }
+            for (tasks, parent) in [(adding, Optional(id)), (removing, nil)] {
+                for var task in tasks {
+                    guard task.id > 0, parent != nil || task.outcomeID == id else { throw DeskError("Task membership changed.") }
+                    let current = try get(task.id)
+                    guard current.version == task.version else { throw DeskError("A selected task changed. Reopen the outcome before saving.") }
+                    task = current
+                    task.outcomeID = parent
+                    _ = try persist(task, actor: "Luke")
+                }
+            }
+            return try outcome(id)
+        }
     }
 }

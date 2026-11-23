@@ -3,10 +3,11 @@ import AppKit
 import TaskCore
 
 enum Queue: String, CaseIterable, Identifiable {
-    case inbox = "Inbox", results = "Brain updates", active = "Active tasks", mine = "My turn", waiting = "Waiting on others", dot = "Dot’s queue", done = "Completed"
+    case outcomes = "Outcomes", inbox = "Inbox", results = "Brain updates", active = "Active tasks", mine = "My turn", waiting = "Waiting on others", dot = "Dot’s queue", done = "Completed"
     var id: Self { self }
     var icon: String {
         switch self {
+        case .outcomes: return "target"
         case .inbox: return "tray.full"
         case .results: return "bell.badge"
         case .active: return "tray.2"
@@ -17,6 +18,7 @@ enum Queue: String, CaseIterable, Identifiable {
         }
     }
     func includes(_ item: WorkItem) -> Bool {
+        if self == .outcomes { return true }
         if self == .done { return item.status == .done }
         guard item.status != .done else { return false }
         let actors = item.openActions.map { $0.assignee.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
@@ -26,7 +28,7 @@ enum Queue: String, CaseIterable, Identifiable {
         case .mine: return actors.contains("luke")
         case .waiting: return actors.contains { !$0.isEmpty && $0 != "luke" && !agents.contains($0) }
         case .dot: return actors.contains(where: agents.contains)
-        case .done, .inbox, .results: return false
+        case .done, .inbox, .results, .outcomes: return false
         }
     }
 }
@@ -70,7 +72,18 @@ struct TaskFilters: Equatable {
         && (person == nil || item.nextPeople.contains { $0.caseInsensitiveCompare(person!) == .orderedSame })
     }
 }
+enum OutcomeScope: Equatable {
+    case overview, unassigned, outcome(Int)
+    var id: Int? {
+        if case .outcome(let id) = self { return id }
+        return nil
+    }
+}
+
 @MainActor final class Desk: ObservableObject {
+    @Published var outcomes: [Outcome] = []
+    @Published var outcomeScope: OutcomeScope = .overview
+    @Published var editOutcome: Outcome?
     @Published var setupTask: WorkItem?
     @Published var results: [BrainResult] = []
     @Published var proposals: [Proposal] = []
@@ -88,10 +101,11 @@ struct TaskFilters: Equatable {
         DeskSort.allCases.first { $0.comparator.keyPath == sortOrder.first?.keyPath } ?? .priority
     }
     private var store: TaskStore?
-    init() { refresh() }
+    init() { refresh(); if !outcomes.isEmpty { queue = .outcomes } }
     func refresh() {
         do {
             if store == nil { store = try TaskStore() }
+            outcomes = try store?.outcomes() ?? []
             tasks = try store?.all() ?? []
             proposals = try store?.inbox() ?? []
             results = try store?.brainResults() ?? []
@@ -108,6 +122,7 @@ struct TaskFilters: Equatable {
     var visible: [WorkItem] {
         tasks.filter { item in
             guard queue.includes(item), filters.includes(item) else { return false }
+            if queue == .outcomes && (outcomeScope == .overview || item.outcomeID != outcomeScope.id) { return false }
             let words = [item.label, item.title, item.group.name, item.group.kind.rawValue, item.owner, item.context, item.latestUpdate] +
                 item.collaborators + item.actions.flatMap { [$0.title,$0.assignee] }
             return search.isEmpty || words.contains { $0.localizedCaseInsensitiveContains(search) }
@@ -124,11 +139,29 @@ struct TaskFilters: Equatable {
             return (left.updatedAt,left.id) > (right.updatedAt,right.id)
         }
     }
+    var selectedOutcome: Outcome? { outcomes.first { $0.id == outcomeScope.id } }
+    func showOutcome(_ scope: OutcomeScope) {
+        queue = .outcomes
+        outcomeScope = scope
+        detailID = nil
+        selection = nil
+        filters = TaskFilters()
+        search = ""
+    }
+    func newTask() {
+        var task = WorkItem()
+        if queue == .outcomes, let outcome = selectedOutcome {
+            task.outcomeID = outcome.id
+            task.group = outcome.group
+        }
+        edit = task
+    }
     func history(_ id: Int) -> [Change] { (try? store?.history(id)) ?? [] }
     func save(_ draft: WorkItem) throws {
         guard let store else { throw DeskError("Unable to open the task database.") }
         let item = try store.save(draft, actor: "Luke")
         refresh()
+        if queue == .outcomes { showOutcome(item.outcomeID.map(OutcomeScope.outcome) ?? .unassigned) }
         if !queue.includes(item) { queue = item.status == .done ? .done : .active }
         if !filters.includes(item) { filters = TaskFilters() }
         if !visible.contains(where: { $0.id == item.id }) { search = "" }
@@ -174,7 +207,7 @@ struct TaskFilters: Equatable {
     }
 
     func createTaskWithAI() {
-        do { try launch(Handoff.createTaskLink(helper: helper, database: customDatabase)) }
+        do { try launch(Handoff.createTaskLink(helper: helper, database: customDatabase, outcome: queue == .outcomes ? selectedOutcome : nil)) }
         catch { self.error = error.localizedDescription }
     }
 }
@@ -207,7 +240,7 @@ struct TaskFilters: Equatable {
         .defaultSize(width: 1130, height: 720)
         .commands {
             CommandGroup(replacing: .newItem) {
-                Button("New Task") { desk.edit = WorkItem() }.keyboardShortcut("n")
+                Button("New Task") { desk.newTask() }.keyboardShortcut("n")
                 Button("Refresh Tasks") { desk.refresh() }.keyboardShortcut("r")
             }
         }

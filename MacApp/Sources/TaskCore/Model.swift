@@ -27,11 +27,23 @@ public struct TaskGroup: Codable, Equatable, Hashable {
         self.name = name
     }
 }
+public struct Outcome: Codable, Identifiable, Equatable {
+    public var id = 0
+    public var version = 0
+    public var name = ""
+    public var group = TaskGroup()
+    public var dueDate = ""
+    public var priority = Priority.medium
+    public init() {}
+    public var displayName: String { name + " · " + group.name }
+}
+
 public struct WorkItem: Codable, Identifiable, Equatable {
     public var id = 0
     public var version = 0
     public var title = ""
     public var group = TaskGroup()
+    public var outcomeID: Int?
     public var owner = "Luke"
     public var collaborators: [String] = []
     public var status = Status.todo

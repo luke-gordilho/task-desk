@@ -100,6 +100,10 @@ struct TaskEditor: View {
                     }
                 default:
                     Section {
+                        Picker("Outcome", selection: $draft.outcomeID) {
+                            Text("Unassigned").tag(nil as Int?)
+                            ForEach(desk.outcomes) { Text($0.displayName).tag(Optional($0.id)) }
+                        }
                         Picker("Status", selection: $draft.status) { ForEach(Status.allCases, id: \.self) { Text($0.rawValue) } }
                         Picker("Priority", selection: $draft.priority) { ForEach(Priority.allCases, id: \.self) { Text($0.rawValue) } }
                     }
@@ -162,7 +166,7 @@ struct TaskEditor: View {
         }
     }
 }
-private struct OptionalDate: View {
+struct OptionalDate: View {
     let label: String
     @Binding var value: String
     @EditorState private var showingCalendar = false

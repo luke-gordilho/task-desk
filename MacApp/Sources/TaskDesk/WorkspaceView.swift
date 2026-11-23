@@ -20,21 +20,30 @@ struct WorkspaceView: View {
                     InboxView()
                 } else if desk.queue == .results {
                     BrainUpdatesView()
+                } else if desk.queue == .outcomes && desk.outcomeScope == .overview {
+                    OutcomesView()
                 } else if let detail {
                     Button {
                         desk.detailID = nil
-                    } label: { Label(desk.queue.rawValue, systemImage: "chevron.left") }
+                    } label: { Label(desk.queue == .outcomes ? (desk.selectedOutcome?.name ?? "Unassigned tasks") : desk.queue.rawValue, systemImage: "chevron.left") }
                         .buttonStyle(.plain).padding(18)
                     Divider()
                     TaskDetail(item: detail).id(detail.id)
                 } else {
+                    if desk.queue == .outcomes {
+                        HStack {
+                            Button { desk.showOutcome(.overview) } label: { Label("Outcomes", systemImage: "chevron.left") }
+                            Spacer()
+                            if let outcome = desk.selectedOutcome { Button("Edit outcome") { desk.editOutcome = outcome } }
+                        }.buttonStyle(.plain).padding(.horizontal, 22).padding(.top, 16)
+                    }
                     HStack {
-                        Text(desk.queue.rawValue).font(.system(size: 26, weight: .semibold))
+                        Text(desk.queue == .outcomes ? (desk.selectedOutcome?.name ?? "Unassigned tasks") : desk.queue.rawValue).font(.system(size: 26, weight: .semibold))
                         Spacer()
                         Button(action: desk.createTaskWithAI) {
                             Label("Create task with AI", systemImage: "sparkles")
                         }.help("Describe a new task in Codex")
-                        Button { desk.edit = WorkItem() } label: { Label("New task", systemImage: "plus") }
+                        Button { desk.newTask() } label: { Label("New task", systemImage: "plus") }
                             .buttonStyle(PrimaryButton())
                     }.padding(.horizontal, 22).padding(.top, 20)
                     controls.padding(.horizontal, 22).padding(.vertical, 14)
@@ -49,6 +58,9 @@ struct WorkspaceView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading).background(Ink.background)
         }
         .foregroundStyle(Ink.text).tint(Ink.control)
+        .sheet(item: $desk.editOutcome) { outcome in
+            OutcomeEditor(outcome: outcome, tasks: desk.tasks).environmentObject(desk).preferredColorScheme(appearance.scheme)
+        }
         .sheet(item: $desk.setupTask) { item in ChatSetupView(task: item).environmentObject(desk) }
         .sheet(item: $desk.edit, onDismiss: { desk.refresh() }) { TaskEditor(draft: $0).environmentObject(desk).preferredColorScheme(appearance.scheme) }
         .alert("Delete task?", isPresented: Binding(get: { desk.pendingDelete != nil }, set: { if !$0 { desk.pendingDelete = nil } }), presenting: desk.pendingDelete) { item in
@@ -61,6 +73,14 @@ struct WorkspaceView: View {
             Button("OK") { desk.error = nil }
         } message: { Text(desk.error ?? "") }
     }
+    private func count(for queue: Queue) -> Int {
+        switch queue {
+        case .outcomes: return desk.outcomes.count
+        case .inbox: return desk.proposals.filter { $0.state == .pending || $0.state == .approved }.count
+        case .results: return desk.results.filter(\.unread).count
+        default: return desk.tasks.filter(queue.includes).count
+        }
+    }
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 4) {
             if let logo = Self.logo {
@@ -72,6 +92,7 @@ struct WorkspaceView: View {
             ForEach(Queue.allCases) { queue in
                 Button {
                     desk.detailID = nil
+                    if queue == .outcomes { desk.showOutcome(.overview) }
                     if desk.queue != queue {
                         desk.queue = queue
                         desk.filters.status = nil
@@ -82,7 +103,7 @@ struct WorkspaceView: View {
                         Image(systemName: queue.icon).frame(width: 16)
                         Text(queue.rawValue)
                         Spacer()
-                        Text("\(queue == .inbox ? desk.proposals.filter { $0.state == .pending || $0.state == .approved }.count : queue == .results ? desk.results.filter(\.unread).count : desk.tasks.filter(queue.includes).count)").font(.caption.monospacedDigit()).foregroundStyle(Ink.muted)
+                        Text("\(count(for: queue))").font(.caption.monospacedDigit()).foregroundStyle(Ink.muted)
                     }.frame(height: 30).padding(.horizontal, 8)
                     .background(desk.queue == queue ? Ink.accent : .clear, in: RoundedRectangle(cornerRadius: 6))
                     .foregroundStyle(desk.queue == queue ? Ink.onAccent : Ink.text)
@@ -189,7 +210,7 @@ private struct FilterPanel: View {
         Form {
             Picker("Status", selection: $desk.filters.status) {
                 Text("Any").tag(nil as Status?)
-                ForEach(Status.allCases.filter { desk.queue == .done ? $0 == .done : $0 != .done }, id: \.self) { Text($0.rawValue).tag(Optional($0)) }
+                ForEach(Status.allCases.filter { desk.queue == .outcomes || (desk.queue == .done ? $0 == .done : $0 != .done) }, id: \.self) { Text($0.rawValue).tag(Optional($0)) }
             }
             Picker("Priority", selection: $desk.filters.priority) {
                 Text("Any").tag(nil as Priority?)

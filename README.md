@@ -4,6 +4,10 @@ Open **Task Desk** in your Mac’s user Applications folder. Press **⌘N** to a
 
 Choose **Create task with AI** beside **New task** to open an editable prompt in Codex. Send the prompt, describe the task, and tell Codex when to save it. Review the draft in the Inbox. Approve it and choose Apply to tasks to create the live task.
 
+Open **Outcomes** in the sidebar to organize tasks around a shared result. Choose **New outcome**, enter a name, choose or enter its project or customer, pick a due date on the calendar, and set its priority. Select any existing tasks that contribute to it. Opening an outcome shows all its tasks, including completed work. Use **New task** there to preselect the outcome and project, or use **Edit outcome** to move several tasks in one save. A task can belong to one outcome at a time. The **Unassigned tasks** view includes tasks created before outcomes were added.
+
+Agents can list outcome IDs with `taskctl outcomes` and propose a task assignment through the Inbox using `outcomeID`. A JSON null removes the assignment. Each task retains its own priority and dates.
+
 Choose **Project** for internal work or **Customer** for customer work, then enter its name. The table shows the task, its project or customer, status, priority, next assignee, and due date. Click a title for the full task. Use **Filter** to combine criteria, and click a column header or use **Sort** to order the results. Choose **System**, **Light**, or **Dark** in the sidebar.
 
 The agent field for this grouping is `group`, for example `{"kind":"Project","name":"Internal tools"}`. Older records with both names are grouped by customer, with the previous project name included in their context.

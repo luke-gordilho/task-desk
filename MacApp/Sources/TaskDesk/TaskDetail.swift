@@ -22,6 +22,12 @@ struct TaskDetail: View {
                     Text(item.priority.rawValue + " priority").foregroundStyle(Ink.muted)
                 }.font(.caption.weight(.medium))
                 Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 7) {
+                    if let parent = desk.outcomes.first(where: { $0.id == item.outcomeID }) {
+                        GridRow {
+                            Text("Outcome").foregroundStyle(Ink.muted)
+                            Button(parent.name) { desk.showOutcome(.outcome(parent.id)) }.buttonStyle(.link)
+                        }
+                    }
                     info("Owner", item.owner)
                     info(item.group.kind.rawValue, item.group.name)
                     info("Helping", item.collaborators.joined(separator: ", "))

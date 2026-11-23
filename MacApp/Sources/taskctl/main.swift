@@ -5,7 +5,7 @@ import TaskCore
 
 let help = """
 taskctl list                       List all tasks as JSON
-taskctl get ID                     Read the full current task
+taskctl outcomes                   List outcomes and their IDs\ntaskctl get ID                     Read the full current task
 taskctl create                     Queue an AI draft from stdin in the Inbox
 taskctl update ID VERSION          Queue proposed task changes from stdin
 taskctl agent-propose KEY ID VERSION  Queue a JSON patch (0 0 for a draft)
@@ -49,6 +49,7 @@ func applyPatch(_ input: [String: Any], to task: WorkItem) throws -> WorkItem {
             patch["group"] = ["kind": task.group.kind.rawValue, "name": ""]
         }
     }
+    if object["outcomeID"] == nil { object["outcomeID"] = NSNull() }
     let readOnly = Set(["id", "version", "createdAt", "updatedAt"])
     for key in patch.keys where object[key] == nil || readOnly.contains(key) {
         throw DeskError("Unknown or read-only field: " + key)
@@ -118,6 +119,7 @@ do {
         }
         try output(receipt)
         if receipt.inserted { try wakeDesk() }
+    case ("outcomes", 1): try output(store.outcomes())
     case ("list", 1): try output(store.all())
     case ("get", 2):
         guard let id = Int(args[1]) else { throw DeskError("Expected a numeric ID.") }

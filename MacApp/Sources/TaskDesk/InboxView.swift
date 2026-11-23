@@ -10,7 +10,7 @@ private struct FieldChange: Identifiable {
     let after: String
 }
 
-private func changes(from base: WorkItem, to item: WorkItem, new: Bool = false) -> [FieldChange] {
+private func changes(from base: WorkItem, to item: WorkItem, outcomes: [Outcome], new: Bool = false) -> [FieldChange] {
     var fields: [FieldChange] = []
     func add(_ name: String, _ old: String, _ proposed: String) {
         if new ? !proposed.isEmpty : old != proposed {
@@ -18,6 +18,11 @@ private func changes(from base: WorkItem, to item: WorkItem, new: Bool = false) 
         }
     }
     func group(_ item: WorkItem) -> String { item.group.name.isEmpty ? "" : item.group.kind.rawValue + " · " + item.group.name }
+    func parent(_ task: WorkItem) -> String {
+        guard let id = task.outcomeID else { return "" }
+        return outcomes.first { $0.id == id }?.displayName ?? "Outcome \(id)"
+    }
+    add("Outcome", parent(base), parent(item))
     add("Title", base.title, item.title)
     add("Project / Customer", group(base), group(item))
     add("Status", base.status.rawValue, item.status.rawValue)
@@ -116,12 +121,12 @@ struct InboxView: View {
                     if stale && (p.state == .pending || p.state == .approved) {
                         if let live {
                             Text("The task changed. Edit the proposal to review it against the latest version. Conflicting fields start with the live value.").foregroundStyle(Ink.warning)
-                            ForEach(changes(from: p.base, to: live)) { field in
+                            ForEach(changes(from: p.base, to: live, outcomes: desk.outcomes)) { field in
                                 Text("Current \(field.id.lowercased()) · \(field.after.isEmpty ? "Empty" : field.after)").font(.callout)
                             }
                         } else { Text("The target task was deleted. You can reject this proposal.").foregroundStyle(Ink.warning) }
                     }
-                    ForEach(changes(from: p.base, to: p.draft, new: p.isNew)) { change in
+                    ForEach(changes(from: p.base, to: p.draft, outcomes: desk.outcomes, new: p.isNew)) { change in
                         VStack(alignment: .leading, spacing: 3) {
                             Text(change.id).font(.caption.weight(.semibold)).foregroundStyle(Ink.muted)
                             if !change.before.isEmpty { Text("Previously · " + change.before).foregroundStyle(.secondary).font(.callout) }
