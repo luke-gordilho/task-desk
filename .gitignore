@@ -60,3 +60,10 @@ fastlane/report.xml
 fastlane/Preview.html
 fastlane/screenshots/**/*.png
 fastlane/test_output
+
+# Local task data and machine-generated files
+.DS_Store
+__pycache__/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
