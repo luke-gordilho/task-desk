@@ -117,7 +117,7 @@ struct StoreTests {
         #expect(components.scheme == "codex" && components.host == "new")
         #expect(components.queryItems?.map(\.name) == ["prompt"])
         let prompt = try #require(components.queryItems?.first?.value)
-        #expect(prompt.contains("TASKDESK_DB='/tmp/Work+Home/tasks.sqlite3' '/tmp/Task Desk.app/Contents/Helpers/taskctl' create"))
+        #expect(prompt.contains("TASKDESK_DB='/tmp/Work+Home/tasks.sqlite3' '/tmp/Task Desk.app/Contents/Helpers/taskctl' agent-propose"))
         #expect(url.absoluteString.contains("Work%2BHome"))
     }
 
@@ -126,21 +126,16 @@ struct StoreTests {
         item.id = 3
         item.title = "A&B? #3 + 5%"
         item.workspace = FileManager.default.temporaryDirectory.path
-        let link = try Handoff.link(task: item, helper: URL(fileURLWithPath: "/tmp/Luke's App/tool"))
+        let link = try Handoff.newThread(task: item, token: UUID(), helper: URL(fileURLWithPath: "/tmp/Luke's App/tool"))
         let params = URLComponents(url: link, resolvingAgainstBaseURL: false)!.queryItems!
         #expect(link.scheme == "codex")
         #expect(link.host == "new")
         #expect(params.first(where: { $0.name == "path" })?.value == item.workspace)
         #expect(params[0].value!.contains(item.title))
         #expect(params[0].value!.contains("get 3"))
-        let claudeLink = try Handoff.link(task: item, helper: URL(fileURLWithPath: "/tmp/Luke's App/tool"), agent: .claude)
-        let claude = try #require(URLComponents(url: claudeLink, resolvingAgainstBaseURL: false))
-        #expect(claude.scheme == "claude" && claude.host == "code" && claude.path == "/new")
-        #expect(claude.queryItems?.first(where: { $0.name == "folder" })?.value == item.workspace)
-        let prompt = try #require(claude.queryItems?.first(where: { $0.name == "q" })?.value)
-        #expect(prompt.contains(item.title) && prompt.contains("TASKDESK_ACTOR=Claude"))
-        #expect(prompt.contains("get 3") && prompt.contains("update 3 VERSION"))
+        #expect(params[0].value!.contains("thread-bind 3"))
+        #expect(params[0].value!.contains("agent-propose"))
         item.workspace = "/missing/" + UUID().uuidString
-        #expect(throws: DeskError.self) { try Handoff.link(task: item, helper: URL(fileURLWithPath: "/tool")) }
+        #expect(throws: DeskError.self) { try Handoff.newThread(task: item, token: UUID(), helper: URL(fileURLWithPath: "/tool")) }
     }
 }

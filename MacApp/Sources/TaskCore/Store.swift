@@ -27,6 +27,13 @@ public final class TaskStore {
         CREATE TABLE IF NOT EXISTS retired_task_ids(id INTEGER PRIMARY KEY);
         CREATE TABLE IF NOT EXISTS inbox(id INTEGER PRIMARY KEY, source TEXT NOT NULL, evidence TEXT NOT NULL,
             body TEXT NOT NULL, notified INTEGER NOT NULL DEFAULT 0, UNIQUE(source,evidence));
+        CREATE TABLE IF NOT EXISTS task_chats(task_id INTEGER PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+            reservation TEXT NOT NULL, address TEXT UNIQUE, thread_id TEXT UNIQUE);
+        CREATE TABLE IF NOT EXISTS brain_dispatches(task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+            event_key TEXT NOT NULL, scope TEXT NOT NULL, state TEXT NOT NULL, PRIMARY KEY(task_id,event_key));
+        CREATE TABLE IF NOT EXISTS brain_results(id INTEGER PRIMARY KEY AUTOINCREMENT, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+            event_key TEXT NOT NULL, note TEXT NOT NULL, notified INTEGER NOT NULL DEFAULT 0, unread INTEGER NOT NULL DEFAULT 1,
+            UNIQUE(task_id,event_key), UNIQUE(task_id,note));
         CREATE INDEX IF NOT EXISTS changes_task ON changes(task_id,id);
         """)
     }
@@ -255,11 +262,19 @@ extension TaskStore {
 
     public func propose(source: SyncSource, key: String, citation: String, id: Int, version: Int,
                         edit: (WorkItem) throws -> WorkItem) throws -> ProposalReceipt {
+        try enqueue(source: source.rawValue, key: key, citation: citation, id: id, version: version, edit: edit)
+    }
+
+    public func proposeAgent(key: String, citation: String, id: Int, version: Int, edit: (WorkItem) throws -> WorkItem) throws -> ProposalReceipt {
+        try enqueue(source: "agent", key: key, citation: citation, id: id, version: version, edit: edit)
+    }
+
+    private func enqueue(source: String, key: String, citation: String, id: Int, version: Int, edit: (WorkItem) throws -> WorkItem) throws -> ProposalReceipt {
         guard !key.isEmpty, !citation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw DeskError("Source evidence ID and citation are required.")
         }
         return try transaction {
-            let identity = [source.rawValue, key]
+            let identity = [source, key]
             if let prior = try rows("SELECT id FROM inbox WHERE source=? AND evidence=?", identity, { Int(sqlite3_column_int64($0, 0)) }).first {
                 return ProposalReceipt(inboxID: prior, existingTaskID: nil, inserted: false)
             }
@@ -270,7 +285,7 @@ extension TaskStore {
             guard base.version == version else { throw DeskError("Task version changed. Review its latest fields.") }
             var draft = try edit(base)
             try validate(&draft)
-            let item = Proposal(id: 0, revision: 1, state: .pending, source: source.rawValue, evidence: key,
+            let item = Proposal(id: 0, revision: 1, state: .pending, source: source, evidence: key,
                                 citation: citation, receivedAt: ISO8601DateFormatter().string(from: Date()), base: base, draft: draft)
             try write("INSERT INTO inbox(source,evidence,body) VALUES(?,?,?)", identity + [String(decoding: try encoder.encode(item), as: UTF8.self)])
             return ProposalReceipt(inboxID: Int(sqlite3_last_insert_rowid(db)), existingTaskID: nil, inserted: true)
@@ -328,5 +343,114 @@ extension TaskStore {
     }
     public func markNotified(ids: [Int]) throws {
         try transaction { for id in ids { try write("UPDATE inbox SET notified=1 WHERE id=?", [String(id)]) } }
+    }
+}
+
+extension TaskStore {
+    public func chat(_ taskID: Int) throws -> ChatAddress? {
+        try rows("SELECT address FROM task_chats WHERE task_id=? AND address IS NOT NULL", [String(taskID)]) {
+            try ChatAddress(field($0, 0))
+        }.first
+    }
+
+    public func setupPending(_ taskID: Int) throws -> Bool {
+        try !rows("SELECT 1 FROM task_chats WHERE task_id=? AND address IS NULL", [String(taskID)]) { _ in true }.isEmpty
+    }
+
+    public func reserveChat(_ taskID: Int) throws -> UUID {
+        try transaction {
+            _ = try get(taskID)
+            guard try chat(taskID) == nil, try !setupPending(taskID) else {
+                throw DeskError("Chat setup already started. Finish the open composer or link your existing chat.")
+            }
+            let token = UUID()
+            try write("INSERT INTO task_chats(task_id,reservation) VALUES(?,?)", [String(taskID),token.uuidString])
+            return token
+        }
+    }
+
+    public func cancelSetup(_ taskID: Int, token: UUID? = nil) throws {
+        let sql = "DELETE FROM task_chats WHERE task_id=? AND address IS NULL"
+        if let token { try write(sql + " AND reservation=?", [String(taskID),token.uuidString]) }
+        else { try write(sql, [String(taskID)]) }
+    }
+
+    public func bindChat(_ taskID: Int, address: ChatAddress, token: UUID? = nil) throws {
+        try transaction {
+            _ = try get(taskID)
+            if let existing = try chat(taskID) {
+                guard existing == address else { throw DeskError("This task already has a different linked chat.") }
+                return
+            }
+            if let token {
+                try write("UPDATE task_chats SET address=?,thread_id=? WHERE task_id=? AND reservation=? AND address IS NULL",
+                          [address.url.absoluteString,address.threadID,String(taskID),token.uuidString])
+                guard sqlite3_changes(db) == 1 else { throw DeskError("This chat setup request is no longer current.") }
+            } else {
+                try write("""
+                INSERT INTO task_chats(task_id,reservation,address,thread_id) VALUES(?,'',?,?)
+                ON CONFLICT(task_id) DO UPDATE SET address=excluded.address,thread_id=excluded.thread_id
+                """, [String(taskID),address.url.absoluteString,address.threadID])
+            }
+        }
+    }
+
+    public func recordResult(taskID: Int, threadID: String, key: String, note: BrainNote) throws -> Bool {
+        guard !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              ![note.work,note.result,note.next].contains(where: { $0.isEmpty }) else {
+            throw DeskError("A result needs a stable event key, work done, outcome and next step.")
+        }
+        return try transaction {
+            guard let linked = try chat(taskID), linked.threadID == threadID.lowercased() else {
+                throw DeskError("Report results from the task’s linked Codex chat.")
+            }
+            let sorted = JSONEncoder()
+            sorted.outputFormatting = [.sortedKeys]
+            let body = String(decoding: try sorted.encode(note), as: UTF8.self)
+            let identity = [String(taskID),key]
+            if let previous = try rows("SELECT note FROM brain_results WHERE task_id=? AND event_key=?", identity, { field($0, 0) }).first {
+                guard previous == body else { throw DeskError("That result key already identifies a different note.") }
+                return false
+            }
+            try write("INSERT INTO brain_results(task_id,event_key,note) VALUES(?,?,?) ON CONFLICT(task_id,note) DO NOTHING", identity + [body])
+            return sqlite3_changes(db) == 1
+        }
+    }
+
+    public func brainResults() throws -> [BrainResult] {
+        try rows("""
+        SELECT r.id,r.task_id,json_extract(t.body,'$.title'),c.address,r.note,r.notified,r.unread
+        FROM brain_results r JOIN tasks t ON t.id=r.task_id JOIN task_chats c ON c.task_id=r.task_id ORDER BY r.id DESC
+        """) { q in
+            BrainResult(id: Int(sqlite3_column_int64(q,0)), taskID: Int(sqlite3_column_int64(q,1)), title: field(q,2),
+                        chat: try ChatAddress(field(q,3)), note: try decoder.decode(BrainNote.self, from: Data(field(q,4).utf8)),
+                        notified: sqlite3_column_int(q,5) != 0, unread: sqlite3_column_int(q,6) != 0)
+        }
+    }
+
+    public func markResultRead(_ id: Int) throws { try write("UPDATE brain_results SET unread=0 WHERE id=?", [String(id)]) }
+    public func claimResultNotification(_ id: Int) throws -> Bool {
+        try write("UPDATE brain_results SET notified=1 WHERE id=? AND notified=0 AND unread=1", [String(id)])
+        return sqlite3_changes(db) == 1
+    }
+    public func retryResultNotification(_ id: Int) throws {
+        try write("UPDATE brain_results SET notified=0 WHERE id=?", [String(id)])
+    }
+
+    // Record intent before calling another process. An ambiguous submission can never auto-replay.
+    public func beginDispatch(_ id: Int, event: UUID, scope: String) throws -> String? {
+        try transaction {
+            guard try chat(id) != nil else { throw DeskError("Link a chat before dispatching work.") }
+            let identity = [String(id),event.uuidString]
+            if let existing = try rows("SELECT scope,state FROM brain_dispatches WHERE task_id=? AND event_key=?", identity, { (field($0,0),field($0,1)) }).first {
+                guard existing.0 == scope else { throw DeskError("This assignment key was already used for a different instruction.") }
+                return existing.1
+            }
+            try write("INSERT INTO brain_dispatches(task_id,event_key,scope,state) VALUES(?,?,?,'unconfirmed')", identity + [scope])
+            return nil
+        }
+    }
+    public func markQueued(_ id: Int, event: UUID) throws {
+        try write("UPDATE brain_dispatches SET state='queued' WHERE task_id=? AND event_key=?", [String(id),event.uuidString])
     }
 }

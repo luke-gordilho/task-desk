@@ -3,11 +3,12 @@ import AppKit
 import TaskCore
 
 enum Queue: String, CaseIterable, Identifiable {
-    case inbox = "Inbox", active = "Active tasks", mine = "My turn", waiting = "Waiting on others", dot = "Dot’s queue", done = "Completed"
+    case inbox = "Inbox", results = "Brain updates", active = "Active tasks", mine = "My turn", waiting = "Waiting on others", dot = "Dot’s queue", done = "Completed"
     var id: Self { self }
     var icon: String {
         switch self {
         case .inbox: return "tray.full"
+        case .results: return "bell.badge"
         case .active: return "tray.2"
         case .mine: return "person.crop.circle"
         case .waiting: return "hourglass"
@@ -25,7 +26,7 @@ enum Queue: String, CaseIterable, Identifiable {
         case .mine: return actors.contains("luke")
         case .waiting: return actors.contains { !$0.isEmpty && $0 != "luke" && !agents.contains($0) }
         case .dot: return actors.contains(where: agents.contains)
-        case .done, .inbox: return false
+        case .done, .inbox, .results: return false
         }
     }
 }
@@ -70,6 +71,8 @@ struct TaskFilters: Equatable {
     }
 }
 @MainActor final class Desk: ObservableObject {
+    @Published var setupTask: WorkItem?
+    @Published var results: [BrainResult] = []
     @Published var proposals: [Proposal] = []
     @Published var tasks: [WorkItem] = []
     @Published var error: String?
@@ -91,6 +94,7 @@ struct TaskFilters: Equatable {
             if store == nil { store = try TaskStore() }
             tasks = try store?.all() ?? []
             proposals = try store?.inbox() ?? []
+            results = try store?.brainResults() ?? []
         } catch { self.error = error.localizedDescription }
     }
     func reviewStore() throws -> TaskStore {
@@ -140,22 +144,38 @@ struct TaskFilters: Equatable {
         } catch { self.error = error.localizedDescription }
         refresh()
     }
-    func open(_ task: WorkItem, in agent: TaskAgent) {
-        openComposer(in: agent) { helper, database in
-            try Handoff.link(task: task, helper: helper, agent: agent, database: database)
-        }
+    private var helper: URL { Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/taskctl") }
+    private var customDatabase: URL? { ProcessInfo.processInfo.environment["TASKDESK_DB"].map { URL(fileURLWithPath: $0) } }
+
+    private func launch(_ url: URL) throws {
+        guard NSWorkspace.shared.open(url) else { throw DeskError("Codex could not open this link on the Mac.") }
     }
-    func createTaskWithAI() {
-        openComposer(in: .codex, link: Handoff.createTaskLink)
-    }
-    private func openComposer(in agent: TaskAgent, link: (URL, URL?) throws -> URL) {
+
+    func open(_ task: WorkItem) {
         do {
-            let helper = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/taskctl")
-            guard FileManager.default.isExecutableFile(atPath: helper.path) else { throw DeskError("Open the installed Task Desk app to use the bundled task tool.") }
-            let database = ProcessInfo.processInfo.environment["TASKDESK_DB"].map { URL(fileURLWithPath: $0) }
-            let url = try link(helper, database)
-            guard NSWorkspace.shared.open(url) else { throw DeskError("macOS could not open \(agent.rawValue).") }
+            if let linked = try reviewStore().chat(task.id) { try launch(linked.url) }
+            else { setupTask = task }
         } catch { self.error = error.localizedDescription }
+    }
+
+    func startSetup(_ task: WorkItem) throws {
+        let store = try reviewStore()
+        let token = try store.reserveChat(task.id)
+        do { try launch(Handoff.newThread(task: task, token: token, helper: helper, database: customDatabase)) }
+        catch { try store.cancelSetup(task.id, token: token); throw error }
+    }
+
+    func openResult(_ result: BrainResult) {
+        do {
+            try launch(result.chat.url)
+            try reviewStore().markResultRead(result.id)
+            refresh()
+        } catch { self.error = error.localizedDescription }
+    }
+
+    func createTaskWithAI() {
+        do { try launch(Handoff.createTaskLink(helper: helper, database: customDatabase)) }
+        catch { self.error = error.localizedDescription }
     }
 }
 @main struct TaskDeskApp: App {
@@ -169,7 +189,15 @@ struct TaskFilters: Equatable {
                 .frame(minWidth: 920, minHeight: 540)
                 .onReceive(DistributedNotificationCenter.default().publisher(for: Notification.Name("com.movedot.taskdesk.inboxChanged"))) { _ in desk.refresh() }
                 .onOpenURL { url in
-                    guard url.scheme == "taskdesk", url.host == "inbox" else { return }
+                    guard url.scheme == "taskdesk" else { return }
+                    if url.host == "result", let id = Int(url.lastPathComponent) {
+                        desk.refresh()
+                        desk.detailID = nil
+                        desk.queue = .results
+                        if let result = desk.results.first(where: { $0.id == id }) { desk.openResult(result) }
+                        return
+                    }
+                    guard url.host == "inbox" else { return }
                     desk.detailID = nil
                     desk.queue = .inbox
                     desk.refresh()

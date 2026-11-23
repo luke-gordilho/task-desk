@@ -29,11 +29,9 @@ struct TaskDetail: View {
                     info("Follow up", item.followUpDate)
                 }
                 HStack {
-                    ForEach(TaskAgent.allCases, id: \.self) { agent in
-                        Button { desk.open(item, in: agent) } label: {
-                            Label("Open in " + agent.rawValue, systemImage: "arrow.up.forward.app")
-                        }
-                        .help("Open an editable prompt in " + (agent == .claude ? "Claude Code" : "Codex"))
+                    Button { desk.open(item) } label: { Label("Open in Codex", systemImage: "arrow.up.forward.app") }
+                    if let latest = desk.results.first(where: { $0.taskID == item.id && $0.unread }) {
+                        Button("Open unread Brain update") { desk.openResult(latest) }
                     }
                 }.controlSize(.large)
                 Divider()

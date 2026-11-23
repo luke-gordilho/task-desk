@@ -18,6 +18,8 @@ struct WorkspaceView: View {
             VStack(alignment: .leading, spacing: 0) {
                 if desk.queue == .inbox {
                     InboxView()
+                } else if desk.queue == .results {
+                    BrainUpdatesView()
                 } else if let detail {
                     Button {
                         desk.detailID = nil
@@ -47,6 +49,7 @@ struct WorkspaceView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading).background(Ink.background)
         }
         .foregroundStyle(Ink.text).tint(Ink.control)
+        .sheet(item: $desk.setupTask) { item in ChatSetupView(task: item).environmentObject(desk) }
         .sheet(item: $desk.edit, onDismiss: { desk.refresh() }) { TaskEditor(draft: $0).environmentObject(desk).preferredColorScheme(appearance.scheme) }
         .alert("Delete task?", isPresented: Binding(get: { desk.pendingDelete != nil }, set: { if !$0 { desk.pendingDelete = nil } }), presenting: desk.pendingDelete) { item in
             Button("Cancel", role: .cancel) {}
@@ -79,7 +82,7 @@ struct WorkspaceView: View {
                         Image(systemName: queue.icon).frame(width: 16)
                         Text(queue.rawValue)
                         Spacer()
-                        Text("\(queue == .inbox ? desk.proposals.filter { $0.state == .pending || $0.state == .approved }.count : desk.tasks.filter(queue.includes).count)").font(.caption.monospacedDigit()).foregroundStyle(Ink.muted)
+                        Text("\(queue == .inbox ? desk.proposals.filter { $0.state == .pending || $0.state == .approved }.count : queue == .results ? desk.results.filter(\.unread).count : desk.tasks.filter(queue.includes).count)").font(.caption.monospacedDigit()).foregroundStyle(Ink.muted)
                     }.frame(height: 30).padding(.horizontal, 8)
                     .background(desk.queue == queue ? Ink.accent : .clear, in: RoundedRectangle(cornerRadius: 6))
                     .foregroundStyle(desk.queue == queue ? Ink.onAccent : Ink.text)
@@ -153,9 +156,7 @@ struct WorkspaceView: View {
             if let id = ids.first, let item = desk.tasks.first(where: { $0.id == id }) {
                 Button("Open task") { desk.detailID = id }
                 Button("Edit task") { desk.edit = item }
-                ForEach(TaskAgent.allCases, id: \.self) { agent in
-                    Button("Open in " + agent.rawValue) { desk.open(item, in: agent) }
-                }
+                Button("Open in Codex") { desk.open(item) }
                 Divider()
                 Button("Delete task…", role: .destructive) { desk.pendingDelete = item }
             }

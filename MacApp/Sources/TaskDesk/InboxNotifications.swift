@@ -35,10 +35,23 @@ final class InboxNotifications: NSObject, NSApplicationDelegate, UNUserNotificat
         do {
             let store = try TaskStore()
             var ids = try store.notificationIDs()
-            guard !ids.isEmpty else { return }
+            let results = try store.brainResults().filter { !$0.notified && $0.unread }
+            guard !ids.isEmpty || !results.isEmpty else { return }
             let center = UNUserNotificationCenter.current()
             let allowed = try await center.requestAuthorization(options: [.alert, .sound])
             guard allowed else { return }
+            for result in results {
+                let content = UNMutableNotificationContent()
+                content.title = result.title
+                content.body = result.note.result
+                content.sound = .default
+                content.userInfo = ["taskResult": result.id]
+                content.threadIdentifier = "taskdesk-chat-" + result.chat.threadID
+                let request = UNNotificationRequest(identifier: "brain-result-\(result.id)", content: content, trigger: nil)
+                guard try store.claimResultNotification(result.id) else { continue }
+                do { try await center.add(request) }
+                catch { try store.retryResultNotification(result.id); throw error }
+            }
             ids = try store.notificationIDs()
             guard let latest = ids.last else { return }
             let content = UNMutableNotificationContent()
@@ -61,7 +74,9 @@ final class InboxNotifications: NSObject, NSApplicationDelegate, UNUserNotificat
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
         withCompletionHandler completion: @escaping () -> Void) {
         Task { @MainActor in
-            if let url = URL(string: "taskdesk://inbox") { NSWorkspace.shared.open(url) }
+            let id = response.notification.request.content.userInfo["taskResult"] as? Int
+            let path = id.map { "result/\($0)" } ?? "inbox"
+            if let url = URL(string: "taskdesk://" + path) { NSWorkspace.shared.open(url) }
             completion()
         }
     }
