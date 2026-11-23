@@ -1,10 +1,12 @@
 # Task Desk
 
-Open **Task Desk** in your Mac’s user Applications folder. Press **⌘N** to add a task. Use **Next actions** to assign steps to Luke, Dot, or another person. The sidebar groups open actions by assignee. The **Context** tab holds the working brief, source references, completion criteria, and Codex instructions.
+Open **Task Desk** in your Mac’s user Applications folder. Press **⌘N** to add a task. Use **Next actions** to assign steps to Luke, Dot, or another person. Use the **Next with** filter to see who has the next action. The **Context** tab holds the working brief, source references, completion criteria, and Codex instructions.
 
 Choose **Create task with AI** beside **New task** to open an editable prompt in Codex. Send the prompt, describe the task, and tell Codex when to save it. Review the draft in the Inbox. Approve it and choose Apply to tasks to create the live task.
 
-Task Desk opens to **Active tasks**. Task lists group matching tasks under their outcome, with **Unassigned tasks** last. Sorting orders tasks within each group. To switch to a flat table, turn off **Sort → Group by outcome**. Task Desk remembers your choice.
+Task Desk opens to **Tasks**. Task lists group matching tasks under their outcome, with **Unassigned tasks** last. Outcome headers show the project or customer, responsible people, due date, and priority. Sorting orders tasks within each group. To switch to a flat table, turn off **Sort → Group by outcome**. Task Desk remembers your choice.
+
+Use **Backlog** for work you want to defer. New tasks started there default to Backlog. Right-click a task and choose **Move to Backlog** to set it aside, or **Move to To do** to bring it back to **Tasks**. Finished work appears under **Completed**.
 
 Open **Outcomes** in the sidebar to organize tasks around a shared result. Choose **New outcome**, enter a name, choose or enter its project or customer, pick a due date on the calendar, and set its priority. Select any existing tasks that contribute to it. Opening an outcome shows all its tasks, including completed work. Use **New task** there to preselect the outcome and project, or use **Edit outcome** to move several tasks in one save. A task can belong to one outcome at a time. The **Unassigned tasks** view includes tasks created before outcomes were added.
 
@@ -45,7 +47,7 @@ On the Task Desk Mac, pass Luke’s authorized scope on standard input to `taskc
 
 For Brain callers with Codex desktop tools, `taskctl brain-handoff TASK_ID EVENT_UUID` accepts the same input and returns the `threadId`, optional `hostId` and prompt for `send_message_to_thread`. Resolve the linked chat with `read_thread` on that host before sending. Choose one dispatch path per assignment. If the Mac or chat is unavailable, report the blocker and keep its link. Brain needs access to this helper or a bridge on the Mac. The communication sync only collects evidence for the Inbox.
 
-The linked chat posts a short account of the work, result and next step. It uses `taskctl brain-result TASK_ID EVENT_UUID` to register the same material result in **Brain updates**, with JSON strings `work`, `result` and `next` on stdin. The helper checks the current Codex thread ID. Replays and identical notes keep a single unread entry. A no-op scan skips this command or returns `{"outcome":"no_change"}`. Clicking an update opens the task chat. With notification permission, the Mac also submits a task-titled alert linked to that result. Task state changes still require Inbox approval and application. Customer and teammate outreach requires Luke’s consent.
+The linked chat posts a short account of the work, result and next step. It uses `taskctl brain-result TASK_ID EVENT_UUID` to register the same material result in **Brain Updates**, with JSON strings `work`, `result` and `next` on stdin. The helper checks the current Codex thread ID. Replays and identical notes keep a single unread entry. A no-op scan skips this command or returns `{"outcome":"no_change"}`. Clicking an update opens the task chat. With notification permission, the Mac also submits a task-titled alert linked to that result. Task state changes still require Inbox approval and application. Customer and teammate outreach requires Luke’s consent.
 
 ## Legacy browser tracker
 

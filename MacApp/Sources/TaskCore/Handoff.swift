@@ -33,10 +33,10 @@ public enum Handoff {
         return (database.map { "TASKDESK_DB=" + quoted($0.path) + " " } ?? "") + quoted(helper.path)
     }
 
-    public static func createTaskLink(helper: URL, database: URL? = nil, outcome: Outcome? = nil) throws -> URL {
+    public static func createTaskLink(helper: URL, database: URL? = nil, outcome: Outcome? = nil, status: Status? = nil) throws -> URL {
         let tool = command(helper, database)
         return try composer("""
-        Help me draft a task for the Task Desk Inbox. \(outcome.map { "Include outcomeID \($0.id) for its parent outcome." } ?? "") Ask what I want to track, then capture the outcome, next actions and assignees. When ready, pipe a JSON object with the agreed task fields to \(tool) agent-propose \(UUID().uuidString) 0 0. Tell me the inbox ID. I approve and apply it in Task Desk.
+        Help me draft a task for the Task Desk Inbox. \(outcome.map { "Include outcomeID \($0.id) for its parent outcome." } ?? "") \(status.map { "Set the proposed status to \"\($0.rawValue)\"." } ?? "") Ask what I want to track, then capture the outcome, next actions and assignees. When ready, pipe a JSON object with the agreed task fields to \(tool) agent-propose \(UUID().uuidString) 0 0. Tell me the inbox ID. I approve and apply it in Task Desk.
         """, workspace: "")
     }
 

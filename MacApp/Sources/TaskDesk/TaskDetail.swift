@@ -14,6 +14,9 @@ struct TaskDetail: View {
                     Text(item.label).font(.caption.monospacedDigit()).foregroundStyle(Ink.muted)
                     Spacer()
                     Button("Delete task…", role: .destructive) { desk.pendingDelete = item }
+                    if item.status == .backlog {
+                        Button("Move to To do") { desk.setStatus(.todo, for: item) }
+                    }
                     Button("Edit task") { desk.edit = item }
                 }
                 Text(item.title).font(.system(size: 26, weight: .semibold)).textSelection(.enabled)

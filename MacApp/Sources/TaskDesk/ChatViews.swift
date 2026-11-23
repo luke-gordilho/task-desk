@@ -46,7 +46,7 @@ struct BrainUpdatesView: View {
     @EnvironmentObject var desk: Desk
     var body: some View {
         VStack(alignment: .leading) {
-            Text("Brain updates").font(.title.bold()).padding()
+            Text("Brain Updates").font(.title.bold()).padding()
             if desk.results.isEmpty {
                 ContentUnavailableView("No task results yet", systemImage: "bell")
             } else {

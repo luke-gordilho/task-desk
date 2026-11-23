@@ -3,33 +3,27 @@ import AppKit
 import TaskCore
 
 enum Queue: String, CaseIterable, Identifiable {
-    case outcomes = "Outcomes", inbox = "Inbox", results = "Brain updates", active = "Active tasks", mine = "My turn", waiting = "Waiting on others", dot = "Dot’s queue", done = "Completed"
+    case active = "Tasks", inbox = "Inbox", results = "Brain Updates", outcomes = "Outcomes", backlog = "Backlog", done = "Completed"
     var id: Self { self }
     var icon: String {
         switch self {
-        case .outcomes: return "target"
+        case .active: return "checklist"
         case .inbox: return "tray.full"
         case .results: return "bell.badge"
-        case .active: return "tray.2"
-        case .mine: return "person.crop.circle"
-        case .waiting: return "hourglass"
-        case .dot: return "sparkles"
+        case .outcomes: return "target"
+        case .backlog: return "tray.2"
         case .done: return "checkmark.circle"
         }
     }
-    func includes(_ item: WorkItem) -> Bool {
-        if self == .outcomes { return true }
-        if self == .done { return item.status == .done }
-        guard item.status != .done else { return false }
-        let actors = item.openActions.map { $0.assignee.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
-        let agents = ["dot", "codex", "claude", "claude code"]
-        switch self {
-        case .active: return true
-        case .mine: return actors.contains("luke")
-        case .waiting: return actors.contains { !$0.isEmpty && $0 != "luke" && !agents.contains($0) }
-        case .dot: return actors.contains(where: agents.contains)
-        case .done, .inbox, .results, .outcomes: return false
+    static func taskQueue(for status: Status) -> Self {
+        switch status {
+        case .backlog: return .backlog
+        case .done: return .done
+        case .todo, .active, .blocked: return .active
         }
+    }
+    func includes(_ status: Status) -> Bool {
+        self == .outcomes || self == Self.taskQueue(for: status)
     }
 }
 extension WorkItem {
@@ -122,7 +116,7 @@ enum OutcomeScope: Equatable {
     }
     var visible: [WorkItem] {
         tasks.filter { item in
-            guard queue.includes(item), filters.includes(item) else { return false }
+            guard queue.includes(item.status), filters.includes(item) else { return false }
             if queue == .outcomes && (outcomeScope == .overview || item.outcomeID != outcomeScope.id) { return false }
             let words = [item.label, item.title, item.group.name, item.group.kind.rawValue, item.owner, item.context, item.latestUpdate] +
                 item.collaborators + item.actions.flatMap { [$0.title,$0.assignee] }
@@ -162,6 +156,7 @@ enum OutcomeScope: Equatable {
     }
     func newTask() {
         var task = WorkItem()
+        if queue == .backlog { task.status = .backlog }
         if queue == .outcomes, let outcome = selectedOutcome {
             task.outcomeID = outcome.id
             task.group = outcome.group
@@ -174,11 +169,16 @@ enum OutcomeScope: Equatable {
         let item = try store.save(draft, actor: "Luke")
         refresh()
         if queue == .outcomes { showOutcome(item.outcomeID.map(OutcomeScope.outcome) ?? .unassigned) }
-        if !queue.includes(item) { queue = item.status == .done ? .done : .active }
+        if !queue.includes(item.status) { queue = Queue.taskQueue(for: item.status) }
         if !filters.includes(item) { filters = TaskFilters() }
         if !visible.contains(where: { $0.id == item.id }) { search = "" }
         selection = item.id
         if detailID != nil { detailID = item.id }
+    }
+    func setStatus(_ status: Status, for item: WorkItem) {
+        var draft = item
+        draft.status = status
+        do { try save(draft) } catch { self.error = error.localizedDescription; refresh() }
     }
     func delete(_ item: WorkItem) {
         do {
@@ -219,7 +219,7 @@ enum OutcomeScope: Equatable {
     }
 
     func createTaskWithAI() {
-        do { try launch(Handoff.createTaskLink(helper: helper, database: customDatabase, outcome: queue == .outcomes ? selectedOutcome : nil)) }
+        do { try launch(Handoff.createTaskLink(helper: helper, database: customDatabase, outcome: queue == .outcomes ? selectedOutcome : nil, status: queue == .backlog ? .backlog : nil)) }
         catch { self.error = error.localizedDescription }
     }
 }

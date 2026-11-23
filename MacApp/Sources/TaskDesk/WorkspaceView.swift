@@ -51,8 +51,7 @@ struct WorkspaceView: View {
                             .buttonStyle(PrimaryButton())
                     }.padding(.horizontal, 22).padding(.top, 20)
                     if desk.queue == .outcomes, let outcome = desk.selectedOutcome {
-                        Text("Responsible · " + (outcome.responsiblePeople.isEmpty ? "Unassigned" : outcome.responsibleNames))
-                            .foregroundStyle(Ink.muted).padding(.horizontal, 22).padding(.top, 4)
+                        OutcomeFields(outcome: outcome).padding(.horizontal, 22).padding(.top, 6)
                     }
                     controls.padding(.horizontal, 22).padding(.vertical, 14)
                     Divider()
@@ -92,7 +91,7 @@ struct WorkspaceView: View {
         case .outcomes: return desk.outcomes.count
         case .inbox: return desk.proposals.filter { $0.state == .pending || $0.state == .approved }.count
         case .results: return desk.results.filter(\.unread).count
-        default: return desk.tasks.filter(queue.includes).count
+        default: return desk.tasks.filter { queue.includes($0.status) }.count
         }
     }
     private var sidebar: some View {
@@ -194,8 +193,10 @@ struct WorkspaceView: View {
         } rows: {
             if groupTasksByOutcome && desk.queue != .outcomes {
                 ForEach(OutcomeTaskSection.group(tasks, by: desk.outcomes)) { section in
-                    Section(section.title) {
+                    Section {
                         ForEach(section.tasks) { TableRow($0) }
+                    } header: {
+                        OutcomeSectionHeader(outcome: section.outcome)
                     }
                 }
             } else {
@@ -206,6 +207,11 @@ struct WorkspaceView: View {
             if let id = ids.first, let item = desk.tasks.first(where: { $0.id == id }) {
                 Button("Open task") { desk.detailID = id }
                 Button("Edit task") { desk.edit = item }
+                if item.status == .backlog {
+                    Button("Move to To do") { desk.setStatus(.todo, for: item) }
+                } else if item.status != .done {
+                    Button("Move to Backlog") { desk.setStatus(.backlog, for: item) }
+                }
                 Button("Open in Codex") { desk.open(item) }
                 Divider()
                 Button("Delete task…", role: .destructive) { desk.pendingDelete = item }
@@ -226,12 +232,12 @@ struct WorkspaceView: View {
         }
     }
     private func statusColor(_ status: Status) -> Color {
-        switch status { case .done: return Ink.success; case .blocked: return Ink.warning; case .active: return Ink.info; case .todo: return Ink.muted }
+        switch status { case .done: return Ink.success; case .blocked: return Ink.warning; case .active: return Ink.info; case .todo, .backlog: return Ink.muted }
     }
 }
 private struct OutcomeTaskSection: Identifiable {
-    let id: Int?
-    let title: String
+    let outcome: Outcome?
+    var id: Int? { outcome?.id }
     let tasks: [WorkItem]
 
     static func group(_ tasks: [WorkItem], by outcomes: [Outcome]) -> [Self] {
@@ -241,12 +247,41 @@ private struct OutcomeTaskSection: Identifiable {
         }
         var sections = outcomes.compactMap { outcome -> Self? in
             guard let tasks = members[outcome.id] else { return nil }
-            return Self(id: outcome.id, title: outcome.displayName, tasks: tasks)
+            return Self(outcome: outcome, tasks: tasks)
         }
         if let tasks = members[nil] {
-            sections.append(Self(id: nil, title: "Unassigned tasks", tasks: tasks))
+            sections.append(Self(outcome: nil, tasks: tasks))
         }
         return sections
+    }
+}
+
+private struct OutcomeSectionHeader: View {
+    let outcome: Outcome?
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Label(outcome?.name ?? "Unassigned tasks", systemImage: outcome == nil ? "tray" : "target")
+                .font(.system(size: 15, weight: .bold)).foregroundStyle(outcome == nil ? Ink.muted : Ink.primary)
+            if let outcome { OutcomeFields(outcome: outcome) }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 10).padding(.vertical, 6)
+        .background(Ink.mutedSurface)
+        .overlay(alignment: .leading) { Rectangle().fill(outcome == nil ? Ink.border : Ink.primary).frame(width: 3) }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private struct OutcomeFields: View {
+    let outcome: Outcome
+    var body: some View {
+        HStack(spacing: 14) {
+            Text(outcome.group.kind.rawValue + " · " + outcome.group.name)
+            Text("Responsible · " + (outcome.responsibleNames.isEmpty ? "Unassigned" : outcome.responsibleNames))
+            Text("Due · " + outcome.dueDate).monospacedDigit().fixedSize()
+            Text(outcome.priority.rawValue + " priority").fontWeight(.semibold).fixedSize()
+        }.font(.callout).foregroundStyle(Ink.text).lineLimit(1)
+            .help([outcome.group.name, outcome.responsibleNames, outcome.dueDate, outcome.priority.rawValue + " priority"].joined(separator: " · "))
     }
 }
 
@@ -260,7 +295,7 @@ private struct FilterPanel: View {
         Form {
             Picker("Status", selection: $desk.filters.status) {
                 Text("Any").tag(nil as Status?)
-                ForEach(Status.allCases.filter { desk.queue == .outcomes || (desk.queue == .done ? $0 == .done : $0 != .done) }, id: \.self) { Text($0.rawValue).tag(Optional($0)) }
+                ForEach(Status.allCases.filter(desk.queue.includes), id: \.self) { Text($0.rawValue).tag(Optional($0)) }
             }
             Picker("Priority", selection: $desk.filters.priority) {
                 Text("Any").tag(nil as Priority?)
