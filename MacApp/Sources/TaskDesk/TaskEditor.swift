@@ -14,7 +14,9 @@ struct TaskEditor: View {
     @EditorState private var error = ""
     @FocusState private var focusTitle: Bool
 
-    init(draft: WorkItem) {
+    let proposalSave: ((WorkItem) throws -> Void)?
+    init(draft: WorkItem, proposalSave: ((WorkItem) throws -> Void)? = nil) {
+        self.proposalSave = proposalSave
         _draft = State(initialValue: draft)
         _people = State(initialValue: draft.collaborators.joined(separator: ", "))
     }
@@ -45,7 +47,7 @@ struct TaskEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 14) {
-                Text(draft.id == 0 ? "New task" : "Edit " + draft.label).font(.title2.weight(.semibold))
+                Text(proposalSave != nil ? "Edit inbox proposal" : draft.id == 0 ? "New task" : "Edit " + draft.label).font(.title2.weight(.semibold))
                 TextField("Task title", text: $draft.title).font(.title3.weight(.medium)).textFieldStyle(.roundedBorder).focused($focusTitle)
                 Picker("Section", selection: $tab) {
                     ForEach(["Task", "Next actions", "Context"], id: \.self) { Text($0) }
@@ -139,10 +141,10 @@ struct TaskEditor: View {
                 if !error.isEmpty { Text(error).font(.caption).foregroundStyle(Ink.danger).fixedSize(horizontal: false, vertical: true) }
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button(draft.id == 0 ? "Create task" : "Save changes") {
+                Button(proposalSave != nil ? "Save proposal" : draft.id == 0 ? "Create task" : "Save changes") {
                     do {
                         draft.collaborators = selectedPeople
-                        try desk.save(draft)
+                        if let proposalSave { try proposalSave(draft) } else { try desk.save(draft) }
                         dismiss()
                     } catch { self.error = error.localizedDescription }
                 }.keyboardShortcut(.defaultAction).buttonStyle(PrimaryButton()).disabled(draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)

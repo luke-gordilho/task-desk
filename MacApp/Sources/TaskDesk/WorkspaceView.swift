@@ -16,7 +16,9 @@ struct WorkspaceView: View {
             sidebar
             Rectangle().fill(Ink.border).frame(width: 1)
             VStack(alignment: .leading, spacing: 0) {
-                if let detail {
+                if desk.queue == .inbox {
+                    InboxView()
+                } else if let detail {
                     Button {
                         desk.detailID = nil
                     } label: { Label(desk.queue.rawValue, systemImage: "chevron.left") }
@@ -27,6 +29,9 @@ struct WorkspaceView: View {
                     HStack {
                         Text(desk.queue.rawValue).font(.system(size: 26, weight: .semibold))
                         Spacer()
+                        Button(action: desk.createTaskWithAI) {
+                            Label("Create task with AI", systemImage: "sparkles")
+                        }.help("Describe a new task in Codex")
                         Button { desk.edit = WorkItem() } label: { Label("New task", systemImage: "plus") }
                             .buttonStyle(PrimaryButton())
                     }.padding(.horizontal, 22).padding(.top, 20)
@@ -74,7 +79,7 @@ struct WorkspaceView: View {
                         Image(systemName: queue.icon).frame(width: 16)
                         Text(queue.rawValue)
                         Spacer()
-                        Text("\(desk.tasks.filter(queue.includes).count)").font(.caption.monospacedDigit()).foregroundStyle(Ink.muted)
+                        Text("\(queue == .inbox ? desk.proposals.filter { $0.state == .pending || $0.state == .approved }.count : desk.tasks.filter(queue.includes).count)").font(.caption.monospacedDigit()).foregroundStyle(Ink.muted)
                     }.frame(height: 30).padding(.horizontal, 8)
                     .background(desk.queue == queue ? Ink.accent : .clear, in: RoundedRectangle(cornerRadius: 6))
                     .foregroundStyle(desk.queue == queue ? Ink.onAccent : Ink.text)

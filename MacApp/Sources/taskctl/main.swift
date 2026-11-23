@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import TaskCore
 
@@ -10,7 +11,8 @@ taskctl sync-init EPOCH             Set missing source checkpoints once
 taskctl sync-status                  Show source windows and errors (Unix seconds)
 taskctl sync-finish SOURCE FROM TO   Advance a successfully scanned window
 taskctl sync-fail SOURCE FROM REASON Record a failure for retry
-taskctl sync-apply SOURCE KEY ID VERSION   Read {"citation":"…","patch":{…}} from stdin; use 0 0 for a new task
+taskctl inbox-list                   List proposals and their review states
+taskctl sync-propose SOURCE KEY ID VERSION   Read {"citation":"…","patch":{…}} from stdin; use 0 0 for a new task
 Example patch: {"latestUpdate":"Draft ready","status":"In progress"}
 Project or customer: {"group":{"kind":"Customer","name":"Example Co"}}
 Set TASKDESK_DB to use a separate database. TASKDESK_ACTOR defaults to Codex.
@@ -82,16 +84,32 @@ do {
             guard let end = Int(args[3]) else { throw DeskError(help) }
             try store.finish(source, from: start, through: end)
         }
-    case ("sync-apply", 5):
+    case ("inbox-list", 1): try output(store.inbox())
+    case ("sync-propose", 5), ("sync-apply", 5):
         guard let source = SyncSource(rawValue: args[1]), let id = Int(args[3]), let version = Int(args[4]),
               let request = try JSONSerialization.jsonObject(with: FileHandle.standardInput.readDataToEndOfFile()) as? [String: Any],
               let citation = request["citation"] as? String, let patch = request["patch"] as? [String: Any]
         else { throw DeskError(help) }
         let protected = ["workspace", "agentInstructions", "references"]
         guard Set(patch.keys).isDisjoint(with: protected) else { throw DeskError("The worker cannot change handoff instructions, workspace or existing source links.") }
-        try output(store.applyEvidence(source: source, key: args[2], citation: citation, id: id, version: version) {
+        let receipt = try store.propose(source: source, key: args[2], citation: citation, id: id, version: version) {
             try applyPatch(patch, to: $0)
-        })
+        }
+        try output(receipt)
+        if receipt.inserted && ProcessInfo.processInfo.environment["TASKDESK_DB"] == nil {
+            let name = Notification.Name("com.movedot.taskdesk.inboxChanged")
+            DistributedNotificationCenter.default().postNotificationName(name, object: nil, userInfo: nil, deliverImmediately: true)
+            let app = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
+                .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            if Bundle(url: app)?.bundleIdentifier == "com.movedot.taskdesk",
+               NSRunningApplication.runningApplications(withBundleIdentifier: "com.movedot.taskdesk").isEmpty {
+                let launcher = Process()
+                launcher.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+                launcher.arguments = ["-g", "-j", app.path]
+                try launcher.run()
+                launcher.waitUntilExit()
+            }
+        }
     case ("list", 1): try output(store.all())
     case ("get", 2):
         guard let id = Int(args[1]) else { throw DeskError("Expected a numeric ID.") }

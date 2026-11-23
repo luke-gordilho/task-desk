@@ -25,6 +25,8 @@ public final class TaskStore {
         CREATE TABLE IF NOT EXISTS sync_receipts(source TEXT NOT NULL, evidence TEXT NOT NULL, task_id INTEGER NOT NULL,
             PRIMARY KEY(source, evidence));
         CREATE TABLE IF NOT EXISTS retired_task_ids(id INTEGER PRIMARY KEY);
+        CREATE TABLE IF NOT EXISTS inbox(id INTEGER PRIMARY KEY, source TEXT NOT NULL, evidence TEXT NOT NULL,
+            body TEXT NOT NULL, notified INTEGER NOT NULL DEFAULT 0, UNIQUE(source,evidence));
         CREATE INDEX IF NOT EXISTS changes_task ON changes(task_id,id);
         """)
     }
@@ -125,21 +127,7 @@ public final class TaskStore {
     }
     private func persist(_ draft: WorkItem, actor: String) throws -> WorkItem {
         var item = draft
-        item.title = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        item.group.name = item.group.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !item.title.isEmpty else { throw DeskError("Enter a title for the task.") }
-        for action in item.actions where action.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            throw DeskError("Enter a description for each next action.")
-        }
-        guard Set(item.actions.map(\.id)).count == item.actions.count else { throw DeskError("Duplicate action ID.") }
-        let dateFormat = DateFormatter()
-        dateFormat.locale = Locale(identifier: "en_US_POSIX")
-        dateFormat.dateFormat = "yyyy-MM-dd"
-        for date in [item.dueDate, item.followUpDate] where !date.isEmpty {
-            guard let value = dateFormat.date(from: date), dateFormat.string(from: value) == date else {
-                throw DeskError("Use YYYY-MM-DD for dates.")
-            }
-        }
+        try validate(&item)
         let stamp = ISO8601DateFormatter().string(from: Date())
         let summary: String
         if item.id == 0 {
@@ -170,6 +158,23 @@ public final class TaskStore {
         try write("INSERT INTO changes(task_id,stamp,actor,summary) VALUES(?,?,?,?)", [String(item.id), stamp, actor, summary])
         return item
     }
+    private func validate(_ item: inout WorkItem) throws {
+        item.title = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        item.group.name = item.group.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !item.title.isEmpty else { throw DeskError("Enter a title for the task.") }
+        for action in item.actions where action.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            throw DeskError("Enter a description for each next action.")
+        }
+        guard Set(item.actions.map(\.id)).count == item.actions.count else { throw DeskError("Duplicate action ID.") }
+        let dateFormat = DateFormatter()
+        dateFormat.locale = Locale(identifier: "en_US_POSIX")
+        dateFormat.dateFormat = "yyyy-MM-dd"
+        for date in [item.dueDate, item.followUpDate] where !date.isEmpty {
+            guard let value = dateFormat.date(from: date), dateFormat.string(from: value) == date else {
+                throw DeskError("Use YYYY-MM-DD for dates.")
+            }
+        }
+    }
     private static func changeSummary(from old: WorkItem, to new: WorkItem) -> String {
         let fields: [(String, Bool)] = [
             ("title", old.title != new.title), ("project or customer", old.group != new.group), ("owner", old.owner != new.owner),
@@ -193,10 +198,6 @@ public struct SyncWindow: Encodable {
     public let from: Int
     public let through: Int
     public let lastError: String
-}
-public struct SyncResult: Encodable {
-    public let taskID: Int
-    public let applied: Bool
 }
 extension TaskStore {
     public func initializeSync(from: Int) throws {
@@ -226,26 +227,106 @@ extension TaskStore {
         try write("UPDATE sync_sources SET last_error=? WHERE source=? AND through=?", [reason,source.rawValue,String(from)])
         guard sqlite3_changes(db) == 1 else { throw DeskError("Checkpoint changed. Reload the source window.") }
     }
-    public func applyEvidence(source: SyncSource, key: String, citation: String, id: Int, version: Int,
-                              edit: (WorkItem) throws -> WorkItem) throws -> SyncResult {
+
+}
+
+extension TaskStore {
+    private func proposalRow(_ q: OpaquePointer) throws -> Proposal {
+        var item = try decoder.decode(Proposal.self, from: Data(field(q, 1).utf8))
+        item.id = Int(sqlite3_column_int64(q, 0))
+        return item
+    }
+
+    public func inbox() throws -> [Proposal] {
+        try rows("SELECT id,body FROM inbox ORDER BY id DESC", [], proposalRow)
+    }
+
+    private func currentProposal(_ expected: Proposal) throws -> Proposal {
+        guard let item = try rows("SELECT id,body FROM inbox WHERE id=?", [String(expected.id)], proposalRow).first,
+              item.revision == expected.revision else { throw DeskError("This proposal changed. Reopen it to review the latest version.") }
+        return item
+    }
+
+    private func writeProposal(_ proposal: Proposal) throws {
+        var item = proposal
+        item.revision += 1
+        try write("UPDATE inbox SET body=? WHERE id=?", [String(decoding: try encoder.encode(item), as: UTF8.self), String(item.id)])
+    }
+
+    public func propose(source: SyncSource, key: String, citation: String, id: Int, version: Int,
+                        edit: (WorkItem) throws -> WorkItem) throws -> ProposalReceipt {
         guard !key.isEmpty, !citation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw DeskError("Source evidence ID and citation are required.")
         }
         return try transaction {
             let identity = [source.rawValue, key]
-            if let previous = try rows("SELECT task_id FROM sync_receipts WHERE source=? AND evidence=?", identity, {
-                Int(sqlite3_column_int64($0, 0))
-            }).first { return SyncResult(taskID: previous, applied: false) }
-            let current = id == 0 ? WorkItem() : try get(id)
-            guard current.version == version else { throw DeskError("Version conflict. Reconcile with the current task.") }
-            var draft = try edit(current)
-            let citationLine = source.rawValue.capitalized + " · " + citation
-            if !draft.references.components(separatedBy: "\n").contains(citationLine) {
-                draft.references = [draft.references, citationLine].filter { !$0.isEmpty }.joined(separator: "\n")
+            if let prior = try rows("SELECT id FROM inbox WHERE source=? AND evidence=?", identity, { Int(sqlite3_column_int64($0, 0)) }).first {
+                return ProposalReceipt(inboxID: prior, existingTaskID: nil, inserted: false)
             }
-            let saved = try persist(draft, actor: "Task Desk worker")
-            try write("INSERT INTO sync_receipts(source,evidence,task_id) VALUES(?,?,?)", identity + [String(saved.id)])
-            return SyncResult(taskID: saved.id, applied: true)
+            if let old = try rows("SELECT task_id FROM sync_receipts WHERE source=? AND evidence=?", identity, { Int(sqlite3_column_int64($0, 0)) }).first {
+                return ProposalReceipt(inboxID: nil, existingTaskID: old, inserted: false)
+            }
+            let base = id == 0 ? WorkItem() : try get(id)
+            guard base.version == version else { throw DeskError("Task version changed. Review its latest fields.") }
+            var draft = try edit(base)
+            try validate(&draft)
+            let item = Proposal(id: 0, revision: 1, state: .pending, source: source.rawValue, evidence: key,
+                                citation: citation, receivedAt: ISO8601DateFormatter().string(from: Date()), base: base, draft: draft)
+            try write("INSERT INTO inbox(source,evidence,body) VALUES(?,?,?)", identity + [String(decoding: try encoder.encode(item), as: UTF8.self)])
+            return ProposalReceipt(inboxID: Int(sqlite3_last_insert_rowid(db)), existingTaskID: nil, inserted: true)
         }
+    }
+
+    public func editProposal(_ expected: Proposal, draft: WorkItem) throws {
+        try transaction {
+            var item = try currentProposal(expected)
+            guard item.state == .pending || item.state == .approved else { throw DeskError("This proposal has already been reviewed.") }
+            let base = item.isNew ? WorkItem() : try get(item.base.id)
+            guard base.id == draft.id, base.version == draft.version else { throw DeskError("Task changed. Reopen the proposal editor.") }
+            var edited = draft
+            try validate(&edited)
+            item.base = base
+            item.draft = edited
+            item.state = .pending
+            try writeProposal(item)
+        }
+    }
+
+    public func review(_ expected: Proposal, approve: Bool) throws {
+        try transaction {
+            var item = try currentProposal(expected)
+            guard item.state == .pending || (!approve && item.state == .approved) else { throw DeskError("This item is no longer pending review.") }
+            if approve && !item.isNew && (try? get(item.base.id).version) != item.base.version {
+                throw DeskError("The target task changed or was deleted. Review the current task and edit or reject this proposal.")
+            }
+            item.state = approve ? .approved : .rejected
+            try writeProposal(item)
+        }
+    }
+
+    public func applyApproved(_ selected: [Proposal]) throws {
+        try transaction {
+            for expected in selected {
+                var item = try currentProposal(expected)
+                guard item.state == .approved else { throw DeskError("Approve the proposal before applying it.") }
+                var task = item.draft
+                if !item.isNew && (try? get(item.base.id).version) != item.base.version {
+                    throw DeskError("The target for “\(task.title)” changed. Edit the proposal against the latest task and approve it again.")
+                }
+                task.references = [task.references, item.citation].filter { !$0.isEmpty }.joined(separator: "\n")
+                let saved = try persist(task, actor: "Luke · Inbox")
+                item.appliedTaskID = saved.id
+                item.state = .applied
+                try writeProposal(item)
+                try write("INSERT INTO sync_receipts(source,evidence,task_id) VALUES(?,?,?)", [item.source,item.evidence,String(saved.id)])
+            }
+        }
+    }
+
+    public func notificationIDs() throws -> [Int] {
+        try rows("SELECT id FROM inbox WHERE notified=0 AND json_extract(body,'$.state')='Pending' ORDER BY id") { Int(sqlite3_column_int64($0, 0)) }
+    }
+    public func markNotified(ids: [Int]) throws {
+        try transaction { for id in ids { try write("UPDATE inbox SET notified=1 WHERE id=?", [String(id)]) } }
     }
 }

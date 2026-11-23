@@ -67,24 +67,40 @@ struct StoreTests {
         try store.initializeSync(from: start + 1)
         let window = try store.window(.slack)
         #expect(window.from == start && window.collectionStart == start)
-        let create = try store.applyEvidence(source: .slack, key: "m1", citation: "thread A", id: 0, version: 0) {
+        let receipt = try store.propose(source: .slack, key: "m1", citation: "Slack · thread A", id: 0, version: 0) {
             var item = $0; item.title = "Prepare a draft"; return item
         }
-        #expect(create.applied)
-        let item = try store.get(create.taskID)
+        #expect(receipt.inserted)
+        let pending = try #require(store.inbox().first)
+        #expect(try store.notificationIDs() == [pending.id])
+        #expect(throws: DeskError.self) { try store.applyApproved([pending]) }
+        try store.review(pending, approve: true)
+        #expect(try store.all().isEmpty)
+        try store.applyApproved(store.inbox())
+        let item = try #require(store.all().first)
         #expect(item.references.contains("thread A"))
-        #expect(throws: DeskError.self) {
-            try store.applyEvidence(source: .outlook, key: "mail", citation: "thread B", id: item.id, version: 0) { $0 }
+        #expect(throws: DeskError.self) { try store.applyApproved(store.inbox()) }
+        _ = try store.propose(source: .outlook, key: "mail", citation: "Outlook · thread B", id: item.id, version: item.version) {
+            var edited = $0; edited.latestUpdate = "Input received"; return edited
         }
-        let edited = try store.applyEvidence(source: .outlook, key: "mail", citation: "thread B", id: item.id, version: item.version) {
-            var item = $0; item.latestUpdate = "Input received"; return item
-        }
-        #expect(edited.taskID == item.id)
-        let latest = try store.get(item.id)
-        #expect(latest.references.contains("thread A") && latest.references.contains("thread B"))
-        try store.delete(latest)
-        let replay = try store.applyEvidence(source: .slack, key: "m1", citation: "thread A", id: 0, version: 0) { $0 }
-        #expect(!replay.applied && replay.taskID == item.id)
+        let update = try #require(store.inbox().first)
+        try store.review(update, approve: true)
+        var other = item
+        other.priority = .high
+        let live = try store.save(other, actor: "Luke")
+        let approved = try #require(store.inbox().first)
+        #expect(throws: DeskError.self) { try store.applyApproved([approved]) }
+        var edited = try approved.editableDraft(on: live)
+        #expect(edited.priority == .high && edited.latestUpdate == "Input received")
+        edited.latestUpdate = "Edited by Luke"
+        try store.editProposal(approved, draft: edited)
+        let revised = try #require(store.inbox().first)
+        #expect(revised.state == .pending)
+        try store.review(revised, approve: false)
+        let replay = try store.propose(source: .outlook, key: "mail", citation: "mail", id: item.id, version: item.version) { $0 }
+        #expect(!replay.inserted && replay.inboxID == update.id)
+        #expect(try store.get(item.id) == live)
+        try store.delete(live)
         #expect(try store.all().isEmpty)
         try store.finish(.slack, from: start, through: window.through)
         try store.fail(.teams, from: start, reason: "Needs connection")
@@ -93,6 +109,18 @@ struct StoreTests {
         #expect(try store.window(.slack).from == window.through)
         #expect(throws: DeskError.self) { try store.finish(.slack, from: start, through: window.through) }
     }
+    @Test func createTaskComposerTargetsTheConfiguredDatabase() throws {
+        let helper = URL(fileURLWithPath: "/tmp/Task Desk.app/Contents/Helpers/taskctl")
+        let database = URL(fileURLWithPath: "/tmp/Work+Home/tasks.sqlite3")
+        let url = try Handoff.createTaskLink(helper: helper, database: database)
+        let components = try #require(URLComponents(url: url, resolvingAgainstBaseURL: false))
+        #expect(components.scheme == "codex" && components.host == "new")
+        #expect(components.queryItems?.map(\.name) == ["prompt"])
+        let prompt = try #require(components.queryItems?.first?.value)
+        #expect(prompt.contains("TASKDESK_DB='/tmp/Work+Home/tasks.sqlite3' '/tmp/Task Desk.app/Contents/Helpers/taskctl' create"))
+        #expect(url.absoluteString.contains("Work%2BHome"))
+    }
+
     @Test func testComposerEscapingAndWorkspace() throws {
         var item = WorkItem()
         item.id = 3

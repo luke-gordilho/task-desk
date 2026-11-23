@@ -2,6 +2,8 @@
 
 Open **Task Desk** in your Mac’s user Applications folder. Press **⌘N** to add a task. Use **Next actions** to assign steps to Luke, Dot, or another person. The sidebar groups open actions by assignee. The **Context** tab holds the working brief, source references, completion criteria, and Codex instructions.
 
+Choose **Create task with AI** beside **New task** to open an editable prompt in Codex. Send the prompt, describe the task, and tell Codex when to save it. Return to Task Desk to see the new task.
+
 Choose **Project** for internal work or **Customer** for customer work, then enter its name. The table shows the task, its project or customer, status, priority, next assignee, and due date. Click a title for the full task. Use **Filter** to combine criteria, and click a column header or use **Sort** to order the results. Choose **System**, **Light**, or **Dark** in the sidebar.
 
 The agent field for this grouping is `group`, for example `{"kind":"Project","name":"Internal tools"}`. Older records with both names are grouped by customer, with the previous project name included in their context.
@@ -14,7 +16,7 @@ The database lives at `~/Library/Application Support/Task Desk/tasks.sqlite3`. T
 "$HOME/Applications/Task Desk.app/Contents/Helpers/taskctl" list
 ```
 
-The Swift package is in [MacApp](MacApp/Package.swift). Run `./MacApp/install.sh` to rebuild and install. The personal workspace starts empty. The two-hour [communication worker](worker/RUNBOOK.md) uses connected Codex apps and the installed helper. Check its per-source catch-up windows and errors with `taskctl sync-status`. Agent execution handoffs are manual.
+The Swift package is in [MacApp](MacApp/Package.swift). Run `./MacApp/install.sh` to rebuild and install. The personal workspace starts empty. The [communication worker](worker/RUNBOOK.md) uses connected Codex apps and the installed helper. Check its per-source catch-up windows and errors with `taskctl sync-status`. Agent execution handoffs are manual.
 
 To run the regression tests with the Command Line Tools installed on this Mac:
 
@@ -22,6 +24,12 @@ To run the regression tests with the Command Line Tools installed on this Mac:
 cd MacApp
 swift test -Xswiftc -plugin-path -Xswiftc "$(xcode-select -p)/usr/lib/swift/host/plugins/testing"
 ```
+
+## Review inbox
+
+The communication worker checks all five sources every two hours on weekdays, from 09:15 through 19:15 São Paulo time. It stages new tasks and updates in **Inbox**. Select a proposal to see the changed fields, next actions and source links. **Edit** saves a draft, **Reject** dismisses it, and **Approve** moves it to the Approved tab. Use **Apply to tasks** for one proposal or **Apply all approved** for the group. If a live task changes, review the current values in the editor and approve again. Old evidence keeps its review decision across retries.
+
+The installed helper accepts `sync-propose SOURCE KEY ID VERSION` with `citation` and `patch` on standard input. Read review states with `inbox-list`. The legacy `sync-apply` spelling also stages a proposal. Task Desk asks macOS for notification permission on the first new arrival. Granted permission enables grouped alerts even when the window is closed. Selecting an alert opens the Inbox.
 
 ## Legacy browser tracker
 

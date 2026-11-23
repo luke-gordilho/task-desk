@@ -3,10 +3,11 @@ import AppKit
 import TaskCore
 
 enum Queue: String, CaseIterable, Identifiable {
-    case active = "Active tasks", mine = "My turn", waiting = "Waiting on others", dot = "Dot’s queue", done = "Completed"
+    case inbox = "Inbox", active = "Active tasks", mine = "My turn", waiting = "Waiting on others", dot = "Dot’s queue", done = "Completed"
     var id: Self { self }
     var icon: String {
         switch self {
+        case .inbox: return "tray.full"
         case .active: return "tray.2"
         case .mine: return "person.crop.circle"
         case .waiting: return "hourglass"
@@ -24,7 +25,7 @@ enum Queue: String, CaseIterable, Identifiable {
         case .mine: return actors.contains("luke")
         case .waiting: return actors.contains { !$0.isEmpty && $0 != "luke" && !agents.contains($0) }
         case .dot: return actors.contains(where: agents.contains)
-        case .done: return false
+        case .done, .inbox: return false
         }
     }
 }
@@ -69,6 +70,7 @@ struct TaskFilters: Equatable {
     }
 }
 @MainActor final class Desk: ObservableObject {
+    @Published var proposals: [Proposal] = []
     @Published var tasks: [WorkItem] = []
     @Published var error: String?
     @Published var edit: WorkItem?
@@ -88,7 +90,16 @@ struct TaskFilters: Equatable {
         do {
             if store == nil { store = try TaskStore() }
             tasks = try store?.all() ?? []
+            proposals = try store?.inbox() ?? []
         } catch { self.error = error.localizedDescription }
+    }
+    func reviewStore() throws -> TaskStore {
+        guard let store else { throw DeskError("Unable to open the task database.") }
+        return store
+    }
+    func changeInbox(_ action: (TaskStore) throws -> Void) {
+        do { try action(reviewStore()) } catch { self.error = error.localizedDescription }
+        refresh()
     }
     var visible: [WorkItem] {
         tasks.filter { item in
@@ -130,16 +141,25 @@ struct TaskFilters: Equatable {
         refresh()
     }
     func open(_ task: WorkItem, in agent: TaskAgent) {
+        openComposer(in: agent) { helper, database in
+            try Handoff.link(task: task, helper: helper, agent: agent, database: database)
+        }
+    }
+    func createTaskWithAI() {
+        openComposer(in: .codex, link: Handoff.createTaskLink)
+    }
+    private func openComposer(in agent: TaskAgent, link: (URL, URL?) throws -> URL) {
         do {
             let helper = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/taskctl")
             guard FileManager.default.isExecutableFile(atPath: helper.path) else { throw DeskError("Open the installed Task Desk app to use the bundled task tool.") }
             let database = ProcessInfo.processInfo.environment["TASKDESK_DB"].map { URL(fileURLWithPath: $0) }
-            let link = try Handoff.link(task: task, helper: helper, agent: agent, database: database)
-            guard NSWorkspace.shared.open(link) else { throw DeskError("macOS could not open \(agent.rawValue).") }
+            let url = try link(helper, database)
+            guard NSWorkspace.shared.open(url) else { throw DeskError("macOS could not open \(agent.rawValue).") }
         } catch { self.error = error.localizedDescription }
     }
 }
 @main struct TaskDeskApp: App {
+    @NSApplicationDelegateAdaptor(InboxNotifications.self) var notifications
     @StateObject var desk = Desk()
     @AppStorage("appearance") var appearance: Appearance = .system
     var body: some Scene {
@@ -147,6 +167,13 @@ struct TaskFilters: Equatable {
             WorkspaceView().environmentObject(desk)
                 .preferredColorScheme(appearance.scheme)
                 .frame(minWidth: 920, minHeight: 540)
+                .onReceive(DistributedNotificationCenter.default().publisher(for: Notification.Name("com.movedot.taskdesk.inboxChanged"))) { _ in desk.refresh() }
+                .onOpenURL { url in
+                    guard url.scheme == "taskdesk", url.host == "inbox" else { return }
+                    desk.detailID = nil
+                    desk.queue = .inbox
+                    desk.refresh()
+                }
                 .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in desk.refresh() }
         }
         .defaultSize(width: 1130, height: 720)
