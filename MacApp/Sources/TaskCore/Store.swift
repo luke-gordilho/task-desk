@@ -20,6 +20,10 @@ public final class TaskStore {
         CREATE TABLE IF NOT EXISTS tasks(id INTEGER PRIMARY KEY, version INTEGER NOT NULL, body TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS changes(id INTEGER PRIMARY KEY, task_id INTEGER NOT NULL REFERENCES tasks(id),
             stamp TEXT NOT NULL, actor TEXT NOT NULL, summary TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS sync_origin(id INTEGER PRIMARY KEY CHECK(id=1), started INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS sync_sources(source TEXT PRIMARY KEY, through INTEGER NOT NULL, last_error TEXT NOT NULL DEFAULT '');
+        CREATE TABLE IF NOT EXISTS sync_receipts(source TEXT NOT NULL, evidence TEXT NOT NULL, task_id INTEGER NOT NULL,
+            PRIMARY KEY(source, evidence));
         CREATE TABLE IF NOT EXISTS retired_task_ids(id INTEGER PRIMARY KEY);
         CREATE INDEX IF NOT EXISTS changes_task ON changes(task_id,id);
         """)
@@ -105,7 +109,21 @@ public final class TaskStore {
             throw error
         }
     }
+    private func transaction<T>(_ body: () throws -> T) throws -> T {
+        try exec("BEGIN IMMEDIATE")
+        do {
+            let result = try body()
+            try exec("COMMIT")
+            return result
+        } catch {
+            try? exec("ROLLBACK")
+            throw error
+        }
+    }
     public func save(_ draft: WorkItem, actor: String) throws -> WorkItem {
+        try transaction { try persist(draft, actor: actor) }
+    }
+    private func persist(_ draft: WorkItem, actor: String) throws -> WorkItem {
         var item = draft
         item.title = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
         item.group.name = item.group.name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -122,42 +140,35 @@ public final class TaskStore {
                 throw DeskError("Use YYYY-MM-DD for dates.")
             }
         }
-        try exec("BEGIN IMMEDIATE")
-        do {
-            let stamp = ISO8601DateFormatter().string(from: Date())
-            let summary: String
-            if item.id == 0 {
-                item.createdAt = stamp
-                // Retire deleted IDs so an old agent handoff can never target a new task.
-                try exec("""
-                INSERT INTO tasks(id,version,body)
-                SELECT MAX(COALESCE((SELECT MAX(id) FROM tasks),0),
-                           COALESCE((SELECT MAX(id) FROM retired_task_ids),0)) + 1, 0, '{}'
-                """)
-                item.id = Int(sqlite3_last_insert_rowid(db))
-                item.version = 1
-                summary = "Created the task"
-            } else {
-                let current = try get(item.id)
-                guard current.version == item.version else {
-                    throw DeskError("This task changed since you opened it. Copy your edits, close the editor, and reopen the latest version.")
-                }
-                item.createdAt = current.createdAt
-                item.updatedAt = current.updatedAt
-                if current == item { try exec("COMMIT"); return current }
-                item.version += 1
-                summary = Self.changeSummary(from: current, to: item)
+        let stamp = ISO8601DateFormatter().string(from: Date())
+        let summary: String
+        if item.id == 0 {
+            item.createdAt = stamp
+            // Retire deleted IDs so an old agent handoff can never target a new task.
+            try exec("""
+            INSERT INTO tasks(id,version,body)
+            SELECT MAX(COALESCE((SELECT MAX(id) FROM tasks),0),
+                       COALESCE((SELECT MAX(id) FROM retired_task_ids),0)) + 1, 0, '{}'
+            """)
+            item.id = Int(sqlite3_last_insert_rowid(db))
+            item.version = 1
+            summary = "Created the task"
+        } else {
+            let current = try get(item.id)
+            guard current.version == item.version else {
+                throw DeskError("This task changed since you opened it. Copy your edits, close the editor, and reopen the latest version.")
             }
-            item.updatedAt = stamp
-            let body = String(decoding: try encoder.encode(item), as: UTF8.self)
-            try write("UPDATE tasks SET version=?,body=? WHERE id=?", [String(item.version), body, String(item.id)])
-            try write("INSERT INTO changes(task_id,stamp,actor,summary) VALUES(?,?,?,?)", [String(item.id), stamp, actor, summary])
-            try exec("COMMIT")
-            return item
-        } catch {
-            try? exec("ROLLBACK")
-            throw error
+            item.createdAt = current.createdAt
+            item.updatedAt = current.updatedAt
+            if current == item { return current }
+            item.version += 1
+            summary = Self.changeSummary(from: current, to: item)
         }
+        item.updatedAt = stamp
+        let body = String(decoding: try encoder.encode(item), as: UTF8.self)
+        try write("UPDATE tasks SET version=?,body=? WHERE id=?", [String(item.version), body, String(item.id)])
+        try write("INSERT INTO changes(task_id,stamp,actor,summary) VALUES(?,?,?,?)", [String(item.id), stamp, actor, summary])
+        return item
     }
     private static func changeSummary(from old: WorkItem, to new: WorkItem) -> String {
         let fields: [(String, Bool)] = [
@@ -170,5 +181,71 @@ public final class TaskStore {
             ("agent instructions", old.agentInstructions != new.agentInstructions), ("workspace", old.workspace != new.workspace)
         ]
         return "Updated " + fields.filter(\.1).map(\.0).joined(separator: ", ")
+    }
+}
+
+public enum SyncSource: String, CaseIterable {
+    case circleback, slack, teams, outlook, plaud
+}
+public struct SyncWindow: Encodable {
+    public let source: String
+    public let collectionStart: Int
+    public let from: Int
+    public let through: Int
+    public let lastError: String
+}
+public struct SyncResult: Encodable {
+    public let taskID: Int
+    public let applied: Bool
+}
+extension TaskStore {
+    public func initializeSync(from: Int) throws {
+        guard from > 0 && from <= Int(Date().timeIntervalSince1970) else { throw DeskError("Invalid starting timestamp.") }
+        try transaction {
+            try write("INSERT OR IGNORE INTO sync_origin(id,started) VALUES(1,?)", [String(from)])
+            for source in SyncSource.allCases {
+                try write("INSERT OR IGNORE INTO sync_sources(source,through) SELECT ?,started FROM sync_origin WHERE id=1", [source.rawValue])
+            }
+        }
+    }
+    public func window(_ source: SyncSource) throws -> SyncWindow {
+        let result = try rows("SELECT through,last_error,started FROM sync_sources CROSS JOIN sync_origin WHERE source=? AND sync_origin.id=1", [source.rawValue]) { q in
+            let from = Int(sqlite3_column_int64(q, 0))
+            return SyncWindow(source: source.rawValue, collectionStart: Int(sqlite3_column_int64(q, 2)), from: from, through: min(from + 7200, Int(Date().timeIntervalSince1970)), lastError: field(q, 1))
+        }
+        guard let window = result.first else { throw DeskError("Initialize source checkpoints with sync-init first.") }
+        return window
+    }
+    public func finish(_ source: SyncSource, from: Int, through: Int) throws {
+        let range = try window(source)
+        guard through > from && through <= range.through else { throw DeskError("Invalid sync window.") }
+        try write("UPDATE sync_sources SET through=?,last_error='' WHERE source=? AND through=?", [String(through), source.rawValue, String(from)])
+        guard sqlite3_changes(db) == 1 else { throw DeskError("Checkpoint changed. Reload the source window.") }
+    }
+    public func fail(_ source: SyncSource, from: Int, reason: String) throws {
+        try write("UPDATE sync_sources SET last_error=? WHERE source=? AND through=?", [reason,source.rawValue,String(from)])
+        guard sqlite3_changes(db) == 1 else { throw DeskError("Checkpoint changed. Reload the source window.") }
+    }
+    public func applyEvidence(source: SyncSource, key: String, citation: String, id: Int, version: Int,
+                              edit: (WorkItem) throws -> WorkItem) throws -> SyncResult {
+        guard !key.isEmpty, !citation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw DeskError("Source evidence ID and citation are required.")
+        }
+        return try transaction {
+            let identity = [source.rawValue, key]
+            if let previous = try rows("SELECT task_id FROM sync_receipts WHERE source=? AND evidence=?", identity, {
+                Int(sqlite3_column_int64($0, 0))
+            }).first { return SyncResult(taskID: previous, applied: false) }
+            let current = id == 0 ? WorkItem() : try get(id)
+            guard current.version == version else { throw DeskError("Version conflict. Reconcile with the current task.") }
+            var draft = try edit(current)
+            let citationLine = source.rawValue.capitalized + " · " + citation
+            if !draft.references.components(separatedBy: "\n").contains(citationLine) {
+                draft.references = [draft.references, citationLine].filter { !$0.isEmpty }.joined(separator: "\n")
+            }
+            let saved = try persist(draft, actor: "Task Desk worker")
+            try write("INSERT INTO sync_receipts(source,evidence,task_id) VALUES(?,?,?)", identity + [String(saved.id)])
+            return SyncResult(taskID: saved.id, applied: true)
+        }
     }
 }

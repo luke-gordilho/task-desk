@@ -58,6 +58,41 @@ struct StoreTests {
         #expect(throws: DeskError.self) { try agent.save(latest, actor: "Claude") }
         #expect(throws: DeskError.self) { try app.delete(latest) }
     }
+    @Test func testWorkerReplayAndIndependentCheckpoints() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = try TaskStore(url: dir.appendingPathComponent("tasks.sqlite3"))
+        let start = Int(Date().timeIntervalSince1970) - 7200
+        try store.initializeSync(from: start)
+        try store.initializeSync(from: start + 1)
+        let window = try store.window(.slack)
+        #expect(window.from == start && window.collectionStart == start)
+        let create = try store.applyEvidence(source: .slack, key: "m1", citation: "thread A", id: 0, version: 0) {
+            var item = $0; item.title = "Prepare a draft"; return item
+        }
+        #expect(create.applied)
+        let item = try store.get(create.taskID)
+        #expect(item.references.contains("thread A"))
+        #expect(throws: DeskError.self) {
+            try store.applyEvidence(source: .outlook, key: "mail", citation: "thread B", id: item.id, version: 0) { $0 }
+        }
+        let edited = try store.applyEvidence(source: .outlook, key: "mail", citation: "thread B", id: item.id, version: item.version) {
+            var item = $0; item.latestUpdate = "Input received"; return item
+        }
+        #expect(edited.taskID == item.id)
+        let latest = try store.get(item.id)
+        #expect(latest.references.contains("thread A") && latest.references.contains("thread B"))
+        try store.delete(latest)
+        let replay = try store.applyEvidence(source: .slack, key: "m1", citation: "thread A", id: 0, version: 0) { $0 }
+        #expect(!replay.applied && replay.taskID == item.id)
+        #expect(try store.all().isEmpty)
+        try store.finish(.slack, from: start, through: window.through)
+        try store.fail(.teams, from: start, reason: "Needs connection")
+        #expect(try store.window(.teams).from == start)
+        #expect(try store.window(.teams).lastError == "Needs connection")
+        #expect(try store.window(.slack).from == window.through)
+        #expect(throws: DeskError.self) { try store.finish(.slack, from: start, through: window.through) }
+    }
     @Test func testComposerEscapingAndWorkspace() throws {
         var item = WorkItem()
         item.id = 3

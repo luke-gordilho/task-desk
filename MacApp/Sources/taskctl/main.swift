@@ -6,6 +6,11 @@ taskctl list                       List all tasks as JSON
 taskctl get ID                     Read the full current task
 taskctl create                     Read a JSON object from stdin
 taskctl update ID VERSION          Apply fields from stdin to that version
+taskctl sync-init EPOCH             Set missing source checkpoints once
+taskctl sync-status                  Show source windows and errors (Unix seconds)
+taskctl sync-finish SOURCE FROM TO   Advance a successfully scanned window
+taskctl sync-fail SOURCE FROM REASON Record a failure for retry
+taskctl sync-apply SOURCE KEY ID VERSION   Read {"citation":"…","patch":{…}} from stdin; use 0 0 for a new task
 Example patch: {"latestUpdate":"Draft ready","status":"In progress"}
 Project or customer: {"group":{"kind":"Customer","name":"Example Co"}}
 Set TASKDESK_DB to use a separate database. TASKDESK_ACTOR defaults to Codex.
@@ -17,8 +22,14 @@ func output<T: Encodable>(_ value: T) throws {
 }
 func applyInput(to task: WorkItem) throws -> WorkItem {
     let data = FileHandle.standardInput.readDataToEndOfFile()
-    guard var patch = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-          var object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(task)) as? [String: Any] else {
+    guard let patch = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+        throw DeskError("Expected a JSON object.")
+    }
+    return try applyPatch(patch, to: task)
+}
+func applyPatch(_ input: [String: Any], to task: WorkItem) throws -> WorkItem {
+    var patch = input
+    guard var object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(task)) as? [String: Any] else {
         throw DeskError("Expected a JSON object.")
     }
     // Accept older clients that send one of the original name fields.
@@ -59,6 +70,28 @@ do {
     let store = try TaskStore()
     let actor = ProcessInfo.processInfo.environment["TASKDESK_ACTOR"] ?? "Codex"
     switch (args[0], args.count) {
+    case ("sync-init", 2):
+        guard let epoch = Int(args[1]) else { throw DeskError("Expected Unix seconds.") }
+        try store.initializeSync(from: epoch)
+    case ("sync-status", 1):
+        try output(SyncSource.allCases.map { try store.window($0) })
+    case ("sync-finish", 4), ("sync-fail", 4):
+        guard let source = SyncSource(rawValue: args[1]), let start = Int(args[2]) else { throw DeskError(help) }
+        if args[0] == "sync-fail" { try store.fail(source, from: start, reason: args[3]) }
+        else {
+            guard let end = Int(args[3]) else { throw DeskError(help) }
+            try store.finish(source, from: start, through: end)
+        }
+    case ("sync-apply", 5):
+        guard let source = SyncSource(rawValue: args[1]), let id = Int(args[3]), let version = Int(args[4]),
+              let request = try JSONSerialization.jsonObject(with: FileHandle.standardInput.readDataToEndOfFile()) as? [String: Any],
+              let citation = request["citation"] as? String, let patch = request["patch"] as? [String: Any]
+        else { throw DeskError(help) }
+        let protected = ["workspace", "agentInstructions", "references"]
+        guard Set(patch.keys).isDisjoint(with: protected) else { throw DeskError("The worker cannot change handoff instructions, workspace or existing source links.") }
+        try output(store.applyEvidence(source: source, key: args[2], citation: citation, id: id, version: version) {
+            try applyPatch(patch, to: $0)
+        })
     case ("list", 1): try output(store.all())
     case ("get", 2):
         guard let id = Int(args[1]) else { throw DeskError("Expected a numeric ID.") }

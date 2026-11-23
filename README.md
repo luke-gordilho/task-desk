@@ -14,7 +14,7 @@ The database lives at `~/Library/Application Support/Task Desk/tasks.sqlite3`. T
 "$HOME/Applications/Task Desk.app/Contents/Helpers/taskctl" list
 ```
 
-The Swift package is in [MacApp](MacApp/Package.swift). Run `./MacApp/install.sh` to rebuild and install. The personal workspace starts empty. Task creation, updates, and agent handoffs are manual.
+The Swift package is in [MacApp](MacApp/Package.swift). Run `./MacApp/install.sh` to rebuild and install. The personal workspace starts empty. The two-hour [communication worker](worker/RUNBOOK.md) uses connected Codex apps and the installed helper. Check its per-source catch-up windows and errors with `taskctl sync-status`. Agent execution handoffs are manual.
 
 To run the regression tests with the Command Line Tools installed on this Mac:
 
