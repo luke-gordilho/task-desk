@@ -32,6 +32,13 @@ extension WorkItem {
     var priorityRank: Int { Priority.allCases.firstIndex(of: priority) ?? 0 }
     var statusRank: Int { Status.allCases.firstIndex(of: status) ?? 0 }
     var dueSort: String { dueDate.isEmpty ? "9999-99-99" : dueDate }
+    mutating func moveStep(_ id: UUID, up: Bool) {
+        guard let index = actions.firstIndex(where: { $0.id == id }) else { return }
+        let neighbor = up ? index - 1 : index + 1
+        guard actions.indices.contains(neighbor) else { return }
+        actions.swapAt(index, neighbor)
+    }
+
     var nextStep: ActionItem? { actions.first { !$0.completed } }
     var nextStepOwner: String {
         nextStep?.assignee.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""

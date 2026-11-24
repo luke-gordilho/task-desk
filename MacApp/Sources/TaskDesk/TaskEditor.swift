@@ -110,11 +110,18 @@ struct ActionFields: View {
     let suggestions: [String]
     var body: some View {
         ForEach($draft.actions) { $action in
+            let id = action.id
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Toggle("Completed", isOn: $action.completed).toggleStyle(.checkbox).labelsHidden().accessibilityLabel("Completed")
                     TextField("What needs to happen?", text: $action.title).textFieldStyle(.roundedBorder)
-                    Button { draft.actions.removeAll { $0.id == action.id } } label: { Image(systemName: "minus.circle") }
+                    Button { draft.moveStep(id, up: true) } label: { Image(systemName: "arrow.up") }
+                        .buttonStyle(.borderless).disabled(id == draft.actions.first?.id)
+                        .accessibilityLabel("Move \(action.title) up").help("Move step up")
+                    Button { draft.moveStep(id, up: false) } label: { Image(systemName: "arrow.down") }
+                        .buttonStyle(.borderless).disabled(id == draft.actions.last?.id)
+                        .accessibilityLabel("Move \(action.title) down").help("Move step down")
+                    Button { draft.actions.removeAll { $0.id == id } } label: { Image(systemName: "minus.circle") }
                         .buttonStyle(.borderless).help("Remove action")
                 }
                 HStack {

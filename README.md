@@ -1,6 +1,6 @@
 # Task Desk
 
-Open **Task Desk** in your Mac’s user Applications folder. Press **⌘N** to add a task. Use **Next actions** to assign steps to Luke, Dot, or another person. The **Next step owner** column shows the person assigned to the first unfinished action in checklist order. Completing that action moves the column to the next person. You can also filter or sort by this name. The **Context** tab holds the working brief, source references, completion criteria, and Codex instructions.
+Open **Task Desk** in your Mac’s user Applications folder. Press **⌘N** to add a task. Use **Next actions** to assign steps to Luke, Dot, or another person. Click the **Next step owner** cell or open **Edit task → Next actions**, move steps with the up and down arrows, and save. The **Next step owner** column shows the person assigned to the first unfinished action in checklist order. Completing that action moves the column to the next person. You can also filter or sort by this name. The **Context** tab holds the working brief, source references, completion criteria, and Codex instructions.
 
 Choose **Create task with AI** beside **New task** to open an editable prompt in Codex. Send the prompt, describe the task, and tell Codex when to save it. Review the draft in the Inbox. Approve it and choose Apply to tasks to create the live task.
 

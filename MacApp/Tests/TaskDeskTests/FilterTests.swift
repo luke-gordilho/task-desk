@@ -41,6 +41,32 @@ struct FilterTests {
         #expect(task.nextStep?.title == "Merge into dev")
     }
 
+    @Test func movingStepsPreservesTheChecklistAndUpdatesItsOwner() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("tasks.sqlite3")
+        let store = try TaskStore(url: url)
+        var task = WorkItem()
+        task.title = "Release feature"
+        var design = ActionItem(title: "Design feature", assignee: "Dot")
+        design.completed = true
+        let merge = ActionItem(title: "Merge feature", assignee: "Gabriel")
+        let test = ActionItem(title: "Test feature", assignee: "Luke")
+        task.actions = [design, test, merge]
+        task = try store.save(task, actor: "Luke")
+        task.moveStep(design.id, up: true)
+        task.moveStep(merge.id, up: false)
+        #expect(task.actions == [design, test, merge])
+        task.moveStep(merge.id, up: true)
+        _ = try store.save(task, actor: "Luke")
+        var reopened = try TaskStore(url: url).get(task.id)
+        #expect(reopened.actions == [design, merge, test])
+        #expect(reopened.nextStepOwner == "Gabriel")
+        reopened.moveStep(merge.id, up: false)
+        #expect(reopened.actions == [design, test, merge])
+        #expect(reopened.nextStepOwner == "Luke")
+    }
+
     @Test func multipleOutcomesAndUnassignedSurviveSaving() throws {
         var filters = TaskFilters()
         filters.priorities = [.high]
