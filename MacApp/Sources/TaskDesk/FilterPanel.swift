@@ -87,39 +87,85 @@ struct FilterPanel: View {
     }
 }
 
-struct SavedFilterControls: View {
+struct VisualizationControls: View {
     @EnvironmentObject var desk: Desk
+    @FilterState private var frames: [UUID: CGRect] = [:]
+    @GestureState private var drag: DragGesture.Value?
+    private let toolbarSpace = "TaskDesk.Visualizations"
+
+    private func target(at point: CGPoint) -> UUID? {
+        frames.first { $0.value.insetBy(dx: -3, dy: -3).contains(point) }?.key
+    }
+    private func move(_ id: UUID, to targetID: UUID) {
+        do { try desk.moveVisualization(id, to: targetID) }
+        catch { desk.error = error.localizedDescription }
+    }
+
     @FilterState private var saving = false
     @FilterState private var name = ""
     @FilterState private var error = ""
 
     var body: some View {
-        if !desk.savedFilters.isEmpty {
+        if !desk.visualizations.isEmpty {
             ScrollView(.horizontal) {
                 HStack(spacing: 6) {
-                    ForEach(desk.savedFilters) { preset in
-                        let active = desk.filters == preset.filters && desk.search == preset.search
+                    ForEach(desk.visualizations) { preset in
+                        let active = desk.matches(preset)
                         Button {
-                            desk.filters = preset.filters
-                            desk.search = preset.search
+                            desk.apply(preset)
                         } label: {
                             HStack(spacing: 4) {
                                 if active { Image(systemName: "checkmark") }
                                 Text(preset.name).lineLimit(1)
-                            }
+                            }.padding(.horizontal, 9).padding(.vertical, 3)
+                                .background(Ink.secondary, in: RoundedRectangle(cornerRadius: 5))
+                                .contentShape(Rectangle())
                         }
+                        .buttonStyle(.plain)
                         .accessibilityLabel(preset.name)
                         .accessibilityAddTraits(active ? .isSelected : [])
-                        .help("Apply “\(preset.name)”")
+                        .help("Apply “\(preset.name)”. Drag onto another visualization to reorder.")
                         .contextMenu {
+                            if let index = desk.visualizations.firstIndex(where: { $0.id == preset.id }) {
+                                if index > 0 {
+                                    Button("Move left") { move(preset.id, to: desk.visualizations[index - 1].id) }
+                                }
+                                if index + 1 < desk.visualizations.count {
+                                    Button("Move right") { move(preset.id, to: desk.visualizations[index + 1].id) }
+                                }
+                                Divider()
+                            }
+                            Button("Update with current settings") {
+                                do { try desk.saveVisualization(named: preset.name, replacing: preset.id) }
+                                catch { desk.error = error.localizedDescription }
+                            }
                             Button("Delete “\(preset.name)”", role: .destructive) {
-                                do { try desk.removeFilter(preset) }
+                                do { try desk.removeVisualization(preset) }
                                 catch { desk.error = error.localizedDescription }
                             }
                         }
+                        .overlay {
+                            if let drag, target(at: drag.location) == preset.id {
+                                RoundedRectangle(cornerRadius: 5).stroke(Ink.focusRing, lineWidth: 2)
+                                    .allowsHitTesting(false)
+                            }
+                        }
+                        .opacity(drag.flatMap { target(at: $0.startLocation) } == preset.id ? 0.55 : 1)
+                        .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(toolbarSpace)) } action: {
+                            frames[preset.id] = $0
+                        }
+                        .onDisappear { frames.removeValue(forKey: preset.id) }
+                        .highPriorityGesture(
+                            DragGesture(minimumDistance: 4, coordinateSpace: .named(toolbarSpace))
+                                .updating($drag) { value, state, _ in state = value }
+                                .onEnded { value in
+                                    guard let targetID = target(at: value.location) else { return }
+                                    move(preset.id, to: targetID)
+                                }
+                        )
                     }
                 }.padding(.vertical, 3)
-            }.fixedSize(horizontal: false, vertical: true)
+            }.coordinateSpace(name: toolbarSpace).fixedSize(horizontal: false, vertical: true)
         }
 
         Button {
@@ -127,21 +173,21 @@ struct SavedFilterControls: View {
             error = ""
             saving = true
         } label: {
-            Image(systemName: "bookmark.badge.plus")
+            Label("Visualizations", systemImage: "bookmark.badge.plus")
         }
-        .accessibilityLabel("Save current filter")
-        .help("Save current filter")
-        .disabled(desk.filters.count == 0 && desk.search.isEmpty)
+        .fixedSize()
+        .accessibilityLabel("Save visualization")
+        .help("Save current filters and sort as a visualization")
         .popover(isPresented: $saving) {
             VStack(alignment: .leading, spacing: 10) {
-                TextField("Filter name", text: $name).textFieldStyle(.roundedBorder)
+                TextField("Visualization name", text: $name).textFieldStyle(.roundedBorder)
                 if !error.isEmpty { Text(error).font(.caption).foregroundStyle(Ink.danger) }
                 HStack {
                     Spacer()
                     Button("Cancel") { saving = false }.keyboardShortcut(.cancelAction)
-                    Button("Save filter") {
+                    Button("Save visualization") {
                         do {
-                            try desk.saveFilter(named: name)
+                            try desk.saveVisualization(named: name)
                             saving = false
                         } catch { self.error = error.localizedDescription }
                     }

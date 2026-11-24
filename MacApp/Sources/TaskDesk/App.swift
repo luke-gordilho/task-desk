@@ -44,7 +44,7 @@ extension WorkItem {
         nextStep?.assignee.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     }
 }
-enum DeskSort: String, CaseIterable {
+enum DeskSort: String, CaseIterable, Codable {
     case priority = "Priority", due = "Due date", title = "Task", group = "Project / Customer"
     case focus = "Focus", status = "Status", person = "Next step owner", updated = "Last updated"
     var comparator: KeyPathComparator<WorkItem> {
@@ -95,11 +95,31 @@ struct TaskFilters: Equatable, Codable {
     }
 }
 
-struct SavedFilter: Codable, Identifiable {
+struct VisualizationSort: Codable, Equatable {
+    let field: DeskSort
+    let descending: Bool
+
+    init?(_ comparator: KeyPathComparator<WorkItem>) {
+        guard let field = DeskSort.allCases.first(where: { $0.comparator.keyPath == comparator.keyPath }) else { return nil }
+        self.field = field
+        descending = comparator.order == .reverse
+    }
+
+    var comparator: KeyPathComparator<WorkItem> {
+        var result = field.comparator
+        result.order = descending ? .reverse : .forward
+        return result
+    }
+}
+
+struct Visualization: Codable, Identifiable {
     var id = UUID()
     let name: String
     let filters: TaskFilters
     let search: String
+    // Legacy saved filters only recorded filters and search.
+    var sort: [VisualizationSort]?
+    var groupByOutcome: Bool?
 }
 enum OutcomeScope: Equatable {
     case overview, unassigned, outcome(Int)
@@ -131,34 +151,77 @@ enum OutcomeScope: Equatable {
         DeskSort.allCases.first { $0.comparator.keyPath == sortOrder.first?.keyPath } ?? .priority
     }
     private var store: TaskStore?
-    @Published private(set) var savedFilters: [SavedFilter] = []
+    @Published private(set) var visualizations: [Visualization] = []
+    @Published var groupByOutcome: Bool {
+        didSet { defaults.set(groupByOutcome, forKey: "groupTasksByOutcome") }
+    }
+    private let defaults: UserDefaults
     private let presetsKey = "savedTaskFilters.v1"
 
-    init() {
-        if let data = UserDefaults.standard.data(forKey: presetsKey) {
-            do { savedFilters = try JSONDecoder().decode([SavedFilter].self, from: data) }
-            catch { self.error = "Could not read saved filters: " + error.localizedDescription }
+    init(defaults: UserDefaults = .standard, store: TaskStore? = nil) {
+        self.defaults = defaults
+        self.store = store
+        groupByOutcome = defaults.object(forKey: "groupTasksByOutcome") as? Bool ?? true
+        if let data = defaults.data(forKey: presetsKey) {
+            do { visualizations = try JSONDecoder().decode([Visualization].self, from: data) }
+            catch { self.error = "Could not read visualizations: " + error.localizedDescription }
         }
         refresh()
     }
 
-    func saveFilter(named name: String) throws {
+    private var currentSort: [VisualizationSort] { sortOrder.compactMap(VisualizationSort.init) }
+
+    func matches(_ view: Visualization) -> Bool {
+        filters == view.filters && search == view.search
+            && (view.sort == nil || view.sort == currentSort)
+            && (view.groupByOutcome == nil || view.groupByOutcome == groupByOutcome)
+    }
+
+    func apply(_ view: Visualization) {
+        filters = view.filters
+        search = view.search
+        if let sort = view.sort { sortOrder = sort.map(\.comparator) }
+        if let group = view.groupByOutcome { groupByOutcome = group }
+    }
+
+    func saveVisualization(named name: String, replacing id: UUID? = nil) throws {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { throw DeskError("Enter a name for this filter.") }
-        guard !savedFilters.contains(where: { $0.name.caseInsensitiveCompare(trimmed) == .orderedSame }) else {
-            throw DeskError("A filter with this name already exists. Choose another name.")
+        guard !trimmed.isEmpty else { throw DeskError("Enter a name for this visualization.") }
+        guard !visualizations.contains(where: { $0.id != id && $0.name.caseInsensitiveCompare(trimmed) == .orderedSame }) else {
+            throw DeskError("A visualization with this name already exists.")
         }
-        let preset = SavedFilter(name: trimmed, filters: filters, search: search)
-        try writeFilters((savedFilters + [preset]).sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending })
+        var views = visualizations
+        let view = Visualization(id: id ?? UUID(), name: trimmed, filters: filters, search: search,
+                                 sort: currentSort, groupByOutcome: groupByOutcome)
+        if let id {
+            guard let index = views.firstIndex(where: { $0.id == id }) else { throw DeskError("Visualization no longer exists.") }
+            views[index] = view
+        } else {
+            views.append(view)
+        }
+        try writeVisualizations(views)
     }
 
-    func removeFilter(_ preset: SavedFilter) throws {
-        try writeFilters(savedFilters.filter { $0.id != preset.id })
+    @discardableResult
+    func moveVisualization(_ id: UUID, to target: UUID) throws -> Bool {
+        var views = visualizations
+        guard let from = views.firstIndex(where: { $0.id == id }),
+              let to = views.firstIndex(where: { $0.id == target }) else { return false }
+        if from != to {
+            let moved = views.remove(at: from)
+            views.insert(moved, at: to)
+            try writeVisualizations(views)
+        }
+        return true
     }
 
-    private func writeFilters(_ presets: [SavedFilter]) throws {
-        UserDefaults.standard.set(try JSONEncoder().encode(presets), forKey: presetsKey)
-        savedFilters = presets
+    func removeVisualization(_ view: Visualization) throws {
+        try writeVisualizations(visualizations.filter { $0.id != view.id })
+    }
+
+    private func writeVisualizations(_ views: [Visualization]) throws {
+        defaults.set(try JSONEncoder().encode(views), forKey: presetsKey)
+        visualizations = views
     }
 
     func refresh() {

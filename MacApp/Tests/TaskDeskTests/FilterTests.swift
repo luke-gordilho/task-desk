@@ -71,9 +71,9 @@ struct FilterTests {
         var filters = TaskFilters()
         filters.priorities = [.high]
         filters.outcomeIDs = [7, 8, nil]
-        let preset = SavedFilter(name: "Launch", filters: filters, search: "")
+        let preset = Visualization(name: "Launch", filters: filters, search: "")
         let data = try JSONEncoder().encode(preset)
-        let restored = try JSONDecoder().decode(SavedFilter.self, from: data).filters
+        let restored = try JSONDecoder().decode(Visualization.self, from: data).filters
         #expect(restored == filters)
         #expect(restored.count == 4)
         var task = WorkItem()
@@ -89,12 +89,54 @@ struct FilterTests {
         #expect(!restored.includes(task))
     }
 
+    @MainActor @Test func visualizationsRestoreSettingsAndToolbarOrderAcrossLaunches() throws {
+        let suite = "TaskDeskTests." + UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
+        defer {
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: dir)
+        }
+        let store = try TaskStore(url: dir.appendingPathComponent("tasks.sqlite3"))
+        let desk = Desk(defaults: defaults, store: store)
+        let sorts = [DeskSort.updated.comparator, DeskSort.title.comparator]
+        desk.sortOrder = sorts
+        try desk.saveVisualization(named: "Updates")
+        desk.filters.focus = true
+        desk.search = "merge"
+        desk.groupByOutcome = false
+        desk.sortOrder = [DeskSort.focus.comparator]
+        try desk.saveVisualization(named: "Focus")
+        try desk.saveVisualization(named: "Review")
+        let original = desk.visualizations
+        #expect(original.map(\.name) == ["Updates", "Focus", "Review"])
+        #expect(try desk.moveVisualization(original[2].id, to: original[0].id))
+        #expect(try desk.moveVisualization(original[0].id, to: original[1].id))
+        let reopened = Desk(defaults: defaults, store: store)
+        #expect(reopened.visualizations.map(\.id) == [original[2].id, original[1].id, original[0].id])
+        reopened.apply(original[0])
+        #expect(reopened.sortOrder == sorts && reopened.groupByOutcome && reopened.filters.count == 0)
+        #expect(reopened.matches(original[0]))
+        reopened.sortOrder[0].order = .forward
+        #expect(!reopened.matches(original[0]))
+        reopened.apply(original[1])
+        #expect(reopened.filters.focus == true && reopened.search == "merge" && !reopened.groupByOutcome)
+        #expect(reopened.sortOrder == [DeskSort.focus.comparator])
+        reopened.sortOrder = sorts
+        try reopened.saveVisualization(named: original[1].name, replacing: original[1].id)
+        let updated = Desk(defaults: defaults, store: store).visualizations[1]
+        #expect(updated.id == original[1].id && reopened.matches(updated))
+        let legacy = Visualization(name: "Legacy", filters: TaskFilters(), search: "old")
+        reopened.apply(legacy)
+        #expect(reopened.search == "old" && reopened.sortOrder == sorts && !reopened.groupByOutcome)
+    }
+
     @Test func oldPresetStillMatchesTasksAcrossOutcomes() throws {
         let data = Data("""
             [{"id":"A12BF316-348A-4EDB-A860-8671F9DDEFD2","name":"Urgent","search":"review",
             "filters":{"statuses":[],"priorities":["High"],"kinds":[],"groups":[],"people":[]}}]
             """.utf8)
-        let preset = try #require(JSONDecoder().decode([SavedFilter].self, from: data).first)
+        let preset = try #require(JSONDecoder().decode([Visualization].self, from: data).first)
         #expect(preset.search == "review" && preset.filters.count == 1)
         var task = WorkItem()
         task.priority = .high

@@ -6,7 +6,6 @@ private typealias ViewState<Value> = SwiftUI.State<Value>
 struct WorkspaceView: View {
     @EnvironmentObject var desk: Desk
     @AppStorage("appearance") var appearance: Appearance = .system
-    @AppStorage("groupTasksByOutcome") private var groupTasksByOutcome = true
     @ViewState private var showFilters = false
     @FocusState private var searching: Bool
     private static let logo = Bundle.main.url(forResource: "Wordmark", withExtension: "png").flatMap(NSImage.init(contentsOf:))
@@ -140,11 +139,11 @@ struct WorkspaceView: View {
                     Button { desk.search = "" } label: { Image(systemName: "xmark.circle.fill") }
                         .buttonStyle(.plain).accessibilityLabel("Clear search")
                 }
-            }.padding(.horizontal, 9).frame(height: 29).frame(maxWidth: desk.savedFilters.isEmpty ? 320 : 185)
+            }.padding(.horizontal, 9).frame(height: 29).frame(maxWidth: desk.visualizations.isEmpty ? 320 : 185)
             .background(Ink.surface, in: RoundedRectangle(cornerRadius: 6))
             .overlay(RoundedRectangle(cornerRadius: 6).stroke(searching ? Ink.focusRing : Ink.inputBorder))
-            if desk.savedFilters.isEmpty { Spacer() }
-            SavedFilterControls()
+            if desk.visualizations.isEmpty { Spacer() }
+            VisualizationControls()
             Button {
                 showFilters.toggle()
             } label: {
@@ -152,7 +151,7 @@ struct WorkspaceView: View {
             }.popover(isPresented: $showFilters) { FilterPanel().environmentObject(desk) }
             Menu {
                 if desk.queue != .outcomes {
-                    Toggle("Group by outcome", isOn: $groupTasksByOutcome)
+                    Toggle("Group by outcome", isOn: $desk.groupByOutcome)
                     Divider()
                 }
                 Picker("Sort by", selection: Binding(get: { desk.sortField }, set: { desk.sortOrder = [$0.comparator] })) {
@@ -177,13 +176,13 @@ struct WorkspaceView: View {
                         Image(systemName: "arrow.up.right.square").foregroundStyle(Ink.muted)
                     }.buttonStyle(.plain).accessibilityLabel("Open " + item.title).help("Open task details")
                 }
-            }.width(min: 135, ideal: 205)
+            }.width(min: 135, ideal: 157)
             TableColumn("Focus", value: \.focusRank) { item in
                 Toggle("Focus", isOn: Binding(get: { item.focus }, set: { desk.updateCell(item, \.focus, to: $0) }))
                     .toggleStyle(.checkbox).labelsHidden().accessibilityLabel("Focus on " + item.title)
             }.width(48)
             TableColumn("Project / Customer", value: \.groupName) { TaskCell(item: $0, field: .group) }
-                .width(min: 100, ideal: 125)
+                .width(min: 100, ideal: 110)
             TableColumn("Status", value: \.statusRank) { item in
                 Menu {
                     ForEach(Status.allCases, id: \.self) { status in
@@ -195,7 +194,7 @@ struct WorkspaceView: View {
                         Text(item.status.rawValue).lineLimit(1)
                     }
                 }.menuStyle(.borderlessButton).help("Change status")
-            }.width(min: 88, ideal: 106)
+            }.width(min: 88, ideal: 94)
             TableColumn("Priority", value: \.priorityRank) { item in
                 Menu {
                     ForEach(Priority.allCases, id: \.self) { priority in
@@ -205,11 +204,16 @@ struct WorkspaceView: View {
                     .menuStyle(.borderlessButton).help("Change priority")
             }.width(min: 67, ideal: 75)
             TableColumn("Next step owner", value: \.nextStepOwner) { TaskCell(item: $0, field: .actions) }
-                .width(min: 108, ideal: 122)
+                .width(min: 108, ideal: 110)
             TableColumn("Due date", value: \.dueSort) { TaskCell(item: $0, field: .date) }
                 .width(min: 85, ideal: 95)
+            TableColumn("Codex") { item in
+                Button("Open in Codex") { desk.open(item) }
+                    .buttonStyle(.link)
+                    .accessibilityLabel("Open " + item.title + " in Codex")
+            }.width(96)
         } rows: {
-            if groupTasksByOutcome && desk.queue != .outcomes {
+            if desk.groupByOutcome && desk.queue != .outcomes {
                 ForEach(OutcomeTaskSection.group(tasks, by: desk.outcomes)) { section in
                     Section {
                         ForEach(section.tasks) { TableRow($0) }
