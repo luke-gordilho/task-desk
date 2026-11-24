@@ -117,6 +117,9 @@ struct InboxView: View {
                 VStack(alignment: .leading, spacing: 13) {
                     Text(p.isNew ? "New task" : "Update · " + p.base.label).font(.caption).foregroundStyle(Ink.muted)
                     Text(p.draft.title).font(.title2.bold())
+                    if let count = p.contributionCount, count > 1 {
+                        Text("\(count) updates combined").font(.subheadline).foregroundStyle(Ink.muted)
+                    }
                     if let id = p.appliedTaskID { Text("Applied to T-" + String(format: "%03d", id)).font(.subheadline) }
                     if stale && (p.state == .pending || p.state == .approved) {
                         if let live {

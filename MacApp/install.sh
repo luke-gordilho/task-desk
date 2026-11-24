@@ -34,8 +34,8 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 </dict></array>
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>1.15</string>
-<key>CFBundleVersion</key><string>16</string>
+<key>CFBundleShortVersionString</key><string>1.16</string>
+<key>CFBundleVersion</key><string>17</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>NSHighResolutionCapable</key><true/>
 </dict></plist>

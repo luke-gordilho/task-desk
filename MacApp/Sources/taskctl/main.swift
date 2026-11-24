@@ -114,11 +114,11 @@ do {
         else { throw DeskError(help) }
         let protected = ["workspace", "agentInstructions", "references"]
         guard Set(patch.keys).isDisjoint(with: protected) else { throw DeskError("The worker cannot change handoff instructions, workspace or existing source links.") }
-        let receipt = try store.propose(source: source, key: args[2], citation: citation, id: id, version: version) {
+        let receipt = try store.propose(source: source, key: args[2], citation: citation, id: id, version: version, fields: Set(patch.keys)) {
             try applyPatch(patch, to: $0)
         }
         try output(receipt)
-        if receipt.inserted { try wakeDesk() }
+        if receipt.inserted || receipt.updated == true { try wakeDesk() }
     case ("outcomes", 1): try output(store.outcomes())
     case ("list", 1): try output(store.all())
     case ("get", 2):
@@ -190,9 +190,9 @@ do {
         let session = (try? boundThreadID()) ?? "agent"
         let key = "\(session)/\(id)/" + (explicit ? args[1] : "\(version)/\(digest)")
         let citation = (try? ChatAddress(session)).map { "Codex · " + $0.url.absoluteString } ?? "Agent proposal · " + key
-        let receipt = try store.proposeAgent(key: key, citation: citation, id: id, version: version) { try applyPatch(patch, to: $0) }
+        let receipt = try store.proposeAgent(key: key, citation: citation, id: id, version: version, fields: Set(patch.keys)) { try applyPatch(patch, to: $0) }
         try output(receipt)
-        if receipt.inserted { try wakeDesk() }
+        if receipt.inserted || receipt.updated == true { try wakeDesk() }
     default: throw DeskError(help)
     }
 } catch {

@@ -47,6 +47,11 @@ public final class TaskStore {
             if !columns.contains("responsible_people") {
                 try exec("ALTER TABLE outcomes ADD COLUMN responsible_people TEXT NOT NULL DEFAULT '[]'")
             }
+            let inboxColumns = try rows("PRAGMA table_info(inbox)", [], { field($0, 1) })
+            if !inboxColumns.contains("merged_into") {
+                try exec("ALTER TABLE inbox ADD COLUMN merged_into INTEGER REFERENCES inbox(id)")
+                try consolidateOpenProposals()
+            }
         }
     }
     deinit { sqlite3_close(db) }
@@ -259,37 +264,54 @@ extension TaskStore {
     }
 
     public func inbox() throws -> [Proposal] {
-        try rows("SELECT id,body FROM inbox ORDER BY id DESC", [], proposalRow)
+        try rows("SELECT id,body FROM inbox WHERE merged_into IS NULL ORDER BY id DESC", [], proposalRow)
     }
 
     private func currentProposal(_ expected: Proposal) throws -> Proposal {
-        guard let item = try rows("SELECT id,body FROM inbox WHERE id=?", [String(expected.id)], proposalRow).first,
+        guard let item = try rows("SELECT id,body FROM inbox WHERE id=? AND merged_into IS NULL", [String(expected.id)], proposalRow).first,
               item.revision == expected.revision else { throw DeskError("This proposal changed. Reopen it to review the latest version.") }
         return item
     }
 
-    private func writeProposal(_ proposal: Proposal) throws {
+    @discardableResult private func writeProposal(_ proposal: Proposal) throws -> Proposal {
         var item = proposal
         item.revision += 1
         try write("UPDATE inbox SET body=? WHERE id=?", [String(decoding: try encoder.encode(item), as: UTF8.self), String(item.id)])
+        return item
     }
 
-    public func propose(source: SyncSource, key: String, citation: String, id: Int, version: Int,
+    private func consolidateOpenProposals() throws {
+        let open = try rows("""
+            SELECT id,body FROM inbox WHERE json_extract(body,'$.base.id') > 0
+            AND json_extract(body,'$.state') IN ('Pending','Approved') ORDER BY id
+            """, [], proposalRow)
+        var roots: [Int: Proposal] = [:]
+        for item in open {
+            if var root = roots[item.base.id] {
+                try root.combine(item)
+                root = try writeProposal(root)
+                try write("UPDATE inbox SET merged_into=? WHERE id=?", [String(root.id), String(item.id)])
+                roots[item.base.id] = root
+            } else { roots[item.base.id] = item }
+        }
+    }
+
+    public func propose(source: SyncSource, key: String, citation: String, id: Int, version: Int, fields: Set<String> = [],
                         edit: (WorkItem) throws -> WorkItem) throws -> ProposalReceipt {
-        try enqueue(source: source.rawValue, key: key, citation: citation, id: id, version: version, edit: edit)
+        try enqueue(source: source.rawValue, key: key, citation: citation, id: id, version: version, fields: fields, edit: edit)
     }
 
-    public func proposeAgent(key: String, citation: String, id: Int, version: Int, edit: (WorkItem) throws -> WorkItem) throws -> ProposalReceipt {
-        try enqueue(source: "agent", key: key, citation: citation, id: id, version: version, edit: edit)
+    public func proposeAgent(key: String, citation: String, id: Int, version: Int, fields: Set<String> = [], edit: (WorkItem) throws -> WorkItem) throws -> ProposalReceipt {
+        try enqueue(source: "agent", key: key, citation: citation, id: id, version: version, fields: fields, edit: edit)
     }
 
-    private func enqueue(source: String, key: String, citation: String, id: Int, version: Int, edit: (WorkItem) throws -> WorkItem) throws -> ProposalReceipt {
+    private func enqueue(source: String, key: String, citation: String, id: Int, version: Int, fields: Set<String>, edit: (WorkItem) throws -> WorkItem) throws -> ProposalReceipt {
         guard !key.isEmpty, !citation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw DeskError("Source evidence ID and citation are required.")
         }
         return try transaction {
             let identity = [source, key]
-            if let prior = try rows("SELECT id FROM inbox WHERE source=? AND evidence=?", identity, { Int(sqlite3_column_int64($0, 0)) }).first {
+            if let prior = try rows("SELECT COALESCE(merged_into,id) FROM inbox WHERE source=? AND evidence=?", identity, { Int(sqlite3_column_int64($0, 0)) }).first {
                 return ProposalReceipt(inboxID: prior, existingTaskID: nil, inserted: false)
             }
             if let old = try rows("SELECT task_id FROM sync_receipts WHERE source=? AND evidence=?", identity, { Int(sqlite3_column_int64($0, 0)) }).first {
@@ -301,6 +323,20 @@ extension TaskStore {
             try validate(&draft)
             let item = Proposal(id: 0, revision: 1, state: .pending, source: source, evidence: key,
                                 citation: citation, receivedAt: ISO8601DateFormatter().string(from: Date()), base: base, draft: draft)
+            if id != 0, var root = try rows("""
+                SELECT id,body FROM inbox WHERE merged_into IS NULL
+                AND json_extract(body,'$.base.id')=CAST(? AS INTEGER)
+                AND json_extract(body,'$.state') IN ('Pending','Approved') LIMIT 1
+                """, [String(id)], proposalRow).first {
+                let needsNotification = root.state == .approved
+                try root.combine(item, explicitFields: fields)
+                try validate(&root.draft)
+                try writeProposal(root)
+                if needsNotification { try write("UPDATE inbox SET notified=0 WHERE id=?", [String(root.id)]) }
+                try write("INSERT INTO inbox(source,evidence,body,merged_into) VALUES(?,?,?,?)",
+                          identity + [String(decoding: try encoder.encode(item), as: UTF8.self), String(root.id)])
+                return ProposalReceipt(inboxID: root.id, existingTaskID: nil, inserted: false, updated: true)
+            }
             try write("INSERT INTO inbox(source,evidence,body) VALUES(?,?,?)", identity + [String(decoding: try encoder.encode(item), as: UTF8.self)])
             return ProposalReceipt(inboxID: Int(sqlite3_last_insert_rowid(db)), existingTaskID: nil, inserted: true)
         }
@@ -347,13 +383,16 @@ extension TaskStore {
                 item.appliedTaskID = saved.id
                 item.state = .applied
                 try writeProposal(item)
-                try write("INSERT INTO sync_receipts(source,evidence,task_id) VALUES(?,?,?)", [item.source,item.evidence,String(saved.id)])
+                try write("""
+                    INSERT INTO sync_receipts(source,evidence,task_id)
+                    SELECT source,evidence,? FROM inbox WHERE id=? OR merged_into=?
+                    """, [String(saved.id), String(item.id), String(item.id)])
             }
         }
     }
 
     public func notificationIDs() throws -> [Int] {
-        try rows("SELECT id FROM inbox WHERE notified=0 AND json_extract(body,'$.state')='Pending' ORDER BY id") { Int(sqlite3_column_int64($0, 0)) }
+        try rows("SELECT id FROM inbox WHERE merged_into IS NULL AND notified=0 AND json_extract(body,'$.state')='Pending' ORDER BY id") { Int(sqlite3_column_int64($0, 0)) }
     }
     public func markNotified(ids: [Int]) throws {
         try transaction { for id in ids { try write("UPDATE inbox SET notified=1 WHERE id=?", [String(id)]) } }
