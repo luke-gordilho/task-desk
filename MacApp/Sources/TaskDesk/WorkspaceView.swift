@@ -108,7 +108,7 @@ struct WorkspaceView: View {
                     if queue == .outcomes { desk.showOutcome(.overview) }
                     if desk.queue != queue {
                         desk.queue = queue
-                        desk.filters.status = nil
+                        desk.filters.statuses.removeAll()
                         desk.selection = nil
                     }
                 } label: {
@@ -282,40 +282,5 @@ private struct OutcomeFields: View {
             Text(outcome.priority.rawValue + " priority").fontWeight(.semibold).fixedSize()
         }.font(.callout).foregroundStyle(Ink.text).lineLimit(1)
             .help([outcome.group.name, outcome.responsibleNames, outcome.dueDate, outcome.priority.rawValue + " priority"].joined(separator: " · "))
-    }
-}
-
-private struct FilterPanel: View {
-    @EnvironmentObject var desk: Desk
-    private var groups: [TaskGroup] {
-        Set(desk.tasks.map(\.group)).filter { !$0.name.isEmpty && (desk.filters.kind == nil || $0.kind == desk.filters.kind) }
-            .sorted { ($0.name,$0.kind.rawValue) < ($1.name,$1.kind.rawValue) }
-    }
-    var body: some View {
-        Form {
-            Picker("Status", selection: $desk.filters.status) {
-                Text("Any").tag(nil as Status?)
-                ForEach(Status.allCases.filter(desk.queue.includes), id: \.self) { Text($0.rawValue).tag(Optional($0)) }
-            }
-            Picker("Priority", selection: $desk.filters.priority) {
-                Text("Any").tag(nil as Priority?)
-                ForEach(Priority.allCases, id: \.self) { Text($0.rawValue).tag(Optional($0)) }
-            }
-            Picker("Work type", selection: $desk.filters.kind) {
-                Text("Any").tag(nil as GroupKind?)
-                ForEach(GroupKind.allCases, id: \.self) { Text($0.rawValue).tag(Optional($0)) }
-            }.onChange(of: desk.filters.kind) { _, kind in
-                if let kind, let group = desk.filters.group, group.kind != kind { desk.filters.group = nil }
-            }
-            Picker("Project / Customer", selection: $desk.filters.group) {
-                Text("Any").tag(nil as TaskGroup?)
-                ForEach(groups, id: \.self) { Text($0.name + " · " + $0.kind.rawValue).tag(Optional($0)) }
-            }
-            Picker("Next with", selection: $desk.filters.person) {
-                Text("Anyone").tag(nil as String?)
-                ForEach(Set(desk.tasks.flatMap(\.nextPeople)).sorted(), id: \.self) { Text($0).tag(Optional($0)) }
-            }
-            Button("Clear filters") { desk.filters = TaskFilters() }.disabled(desk.filters.count == 0)
-        }.padding(16).frame(width: 300).background(Ink.surface)
     }
 }

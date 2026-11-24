@@ -53,18 +53,28 @@ enum DeskSort: String, CaseIterable {
         }
     }
 }
-struct TaskFilters: Equatable {
-    var status: Status?
-    var priority: Priority?
-    var kind: GroupKind?
-    var group: TaskGroup?
-    var person: String?
-    var count: Int { [status != nil, priority != nil, kind != nil, group != nil, person != nil].filter { $0 }.count }
+struct TaskFilters: Equatable, Codable {
+    var statuses: Set<Status> = []
+    var priorities: Set<Priority> = []
+    var kinds: Set<GroupKind> = []
+    var groups: Set<TaskGroup> = []
+    var people: Set<String> = []
+    var count: Int { statuses.count + priorities.count + kinds.count + groups.count + people.count }
+
     func includes(_ item: WorkItem) -> Bool {
-        (status == nil || status == item.status) && (priority == nil || priority == item.priority)
-        && (kind == nil || kind == item.group.kind) && (group == nil || group == item.group)
-        && (person == nil || item.nextPeople.contains { $0.caseInsensitiveCompare(person!) == .orderedSame })
+        (statuses.isEmpty || statuses.contains(item.status))
+        && (priorities.isEmpty || priorities.contains(item.priority))
+        && (kinds.isEmpty || kinds.contains(item.group.kind))
+        && (groups.isEmpty || groups.contains(item.group))
+        && (people.isEmpty || item.nextPeople.contains { people.contains($0.lowercased()) })
     }
+}
+
+struct SavedFilter: Codable, Identifiable {
+    var id = UUID()
+    let name: String
+    let filters: TaskFilters
+    let search: String
 }
 enum OutcomeScope: Equatable {
     case overview, unassigned, outcome(Int)
@@ -96,7 +106,36 @@ enum OutcomeScope: Equatable {
         DeskSort.allCases.first { $0.comparator.keyPath == sortOrder.first?.keyPath } ?? .priority
     }
     private var store: TaskStore?
-    init() { refresh() }
+    @Published private(set) var savedFilters: [SavedFilter] = []
+    private let presetsKey = "savedTaskFilters.v1"
+
+    init() {
+        if let data = UserDefaults.standard.data(forKey: presetsKey) {
+            do { savedFilters = try JSONDecoder().decode([SavedFilter].self, from: data) }
+            catch { self.error = "Could not read saved filters: " + error.localizedDescription }
+        }
+        refresh()
+    }
+
+    func saveFilter(named name: String) throws {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw DeskError("Enter a name for this filter.") }
+        guard !savedFilters.contains(where: { $0.name.caseInsensitiveCompare(trimmed) == .orderedSame }) else {
+            throw DeskError("A filter with this name already exists. Choose another name.")
+        }
+        let preset = SavedFilter(name: trimmed, filters: filters, search: search)
+        try writeFilters((savedFilters + [preset]).sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending })
+    }
+
+    func removeFilter(_ preset: SavedFilter) throws {
+        try writeFilters(savedFilters.filter { $0.id != preset.id })
+    }
+
+    private func writeFilters(_ presets: [SavedFilter]) throws {
+        UserDefaults.standard.set(try JSONEncoder().encode(presets), forKey: presetsKey)
+        savedFilters = presets
+    }
+
     func refresh() {
         do {
             if store == nil { store = try TaskStore() }
