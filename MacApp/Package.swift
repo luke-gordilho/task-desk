@@ -8,6 +8,7 @@ let package = Package(
         .target(name: "TaskCore"),
         .executableTarget(name: "TaskDesk", dependencies: ["TaskCore"]),
         .executableTarget(name: "taskctl", dependencies: ["TaskCore"]),
-        .testTarget(name: "TaskCoreTests", dependencies: ["TaskCore"])
+        .testTarget(name: "TaskCoreTests", dependencies: ["TaskCore"]),
+        .testTarget(name: "TaskDeskTests", dependencies: ["TaskDesk", "TaskCore"])
     ]
 )

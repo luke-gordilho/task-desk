@@ -56,6 +56,7 @@ struct FilterPanel: View {
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
+                    outcomeChoices
                     choices("Status", Status.allCases.filter { desk.queue.includes($0) || desk.filters.statuses.contains($0) },
                             $desk.filters.statuses) { $0.rawValue }
                     choices("Priority", Priority.allCases, $desk.filters.priorities) { $0.rawValue }
@@ -83,6 +84,19 @@ struct FilterPanel: View {
         }.padding(16).frame(width: 350).background(Ink.surface)
         .onChange(of: desk.filters.kinds) { _, kinds in
             if !kinds.isEmpty { desk.filters.groups = desk.filters.groups.filter { kinds.contains($0.kind) } }
+        }
+    }
+
+    private var outcomeChoices: some View {
+        let outcomes = desk.outcomes.sorted { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
+        let labels = Dictionary(uniqueKeysWithValues: outcomes.map { ($0.id, $0.displayName) })
+        let duplicates = Dictionary(grouping: outcomes, by: \.displayName).filter { $0.value.count > 1 }
+        let missing = desk.filters.outcomeIDs.compactMap { $0 }.filter { labels[$0] == nil }.sorted()
+        let options: [Int?] = [nil] + (outcomes.map(\.id) + missing).map(Optional.some)
+        return choices("Outcome", options, $desk.filters.outcomeIDs) { id in
+            guard let id else { return "Unassigned tasks" }
+            guard let label = labels[id] else { return "Deleted outcome #\(id)" }
+            return duplicates[label] == nil ? label : "\(label) (#\(id))"
         }
     }
 

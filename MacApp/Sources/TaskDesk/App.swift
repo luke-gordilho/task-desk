@@ -59,12 +59,27 @@ struct TaskFilters: Equatable, Codable {
     var kinds: Set<GroupKind> = []
     var groups: Set<TaskGroup> = []
     var people: Set<String> = []
-    var count: Int { statuses.count + priorities.count + kinds.count + groups.count + people.count }
+    var outcomeIDs: Set<Int?> = [] // A selected nil includes tasks without an outcome.
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let fields = try decoder.container(keyedBy: CodingKeys.self)
+        statuses = try fields.decode(Set<Status>.self, forKey: .statuses)
+        priorities = try fields.decode(Set<Priority>.self, forKey: .priorities)
+        kinds = try fields.decode(Set<GroupKind>.self, forKey: .kinds)
+        groups = try fields.decode(Set<TaskGroup>.self, forKey: .groups)
+        people = try fields.decode(Set<String>.self, forKey: .people)
+        outcomeIDs = try fields.decodeIfPresent(Set<Int?>.self, forKey: .outcomeIDs) ?? []
+    }
+
+    var count: Int { statuses.count + priorities.count + kinds.count + groups.count + people.count + outcomeIDs.count }
 
     func includes(_ item: WorkItem) -> Bool {
         (statuses.isEmpty || statuses.contains(item.status))
         && (priorities.isEmpty || priorities.contains(item.priority))
         && (kinds.isEmpty || kinds.contains(item.group.kind))
+        && (outcomeIDs.isEmpty || outcomeIDs.contains(item.outcomeID))
         && (groups.isEmpty || groups.contains(item.group))
         && (people.isEmpty || item.nextPeople.contains { people.contains($0.lowercased()) })
     }
