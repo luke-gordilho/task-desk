@@ -140,10 +140,11 @@ struct WorkspaceView: View {
                     Button { desk.search = "" } label: { Image(systemName: "xmark.circle.fill") }
                         .buttonStyle(.plain).accessibilityLabel("Clear search")
                 }
-            }.padding(.horizontal, 9).frame(height: 29).frame(maxWidth: 320)
+            }.padding(.horizontal, 9).frame(height: 29).frame(maxWidth: desk.savedFilters.isEmpty ? 320 : 185)
             .background(Ink.surface, in: RoundedRectangle(cornerRadius: 6))
             .overlay(RoundedRectangle(cornerRadius: 6).stroke(searching ? Ink.focusRing : Ink.inputBorder))
-            Spacer()
+            if desk.savedFilters.isEmpty { Spacer() }
+            SavedFilterControls()
             Button {
                 showFilters.toggle()
             } label: {
