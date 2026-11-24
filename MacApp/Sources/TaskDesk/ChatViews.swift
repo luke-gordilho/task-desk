@@ -3,6 +3,40 @@ import TaskCore
 
 private typealias ChatState<T> = SwiftUI.State<T>
 
+struct CodexProjectSettings: View {
+    static let folderKey = "codexDefaultProjectFolder"
+    static let idKey = "codexDefaultProjectID"
+    @AppStorage(Self.folderKey) private var folder = ""
+    @AppStorage(Self.idKey) private var projectID = ""
+
+    var body: some View {
+        Form {
+            Section("Default project for new Codex task chats") {
+                LabeledContent("Project folder") {
+                    Text(folder.isEmpty ? "Use task workspace" : folder)
+                        .lineLimit(2).truncationMode(.middle).help(folder)
+                    Button("Choose…") {
+                        let panel = NSOpenPanel()
+                        panel.canChooseFiles = false
+                        panel.canChooseDirectories = true
+                        panel.allowsMultipleSelection = false
+                        if panel.runModal() == .OK, let url = panel.url, url.path != folder {
+                            folder = url.path
+                            projectID = ""
+                        }
+                    }
+                }
+                if !folder.isEmpty {
+                    TextField("Codex project ID", text: $projectID, prompt: Text("Optional"))
+                    Text("Use the project ID when multiple Codex projects share this folder.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Button("Use task workspace instead") { folder = ""; projectID = "" }
+                }
+            }
+        }.formStyle(.grouped).frame(width: 510).fixedSize(horizontal: false, vertical: true)
+    }
+}
+
 struct ChatSetupView: View {
     let task: WorkItem
     @EnvironmentObject var desk: Desk

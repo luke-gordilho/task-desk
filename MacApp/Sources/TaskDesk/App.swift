@@ -260,7 +260,12 @@ enum OutcomeScope: Equatable {
     func startSetup(_ task: WorkItem) throws {
         let store = try reviewStore()
         let token = try store.reserveChat(task.id)
-        do { try launch(Handoff.newThread(task: task, token: token, helper: helper, database: customDatabase)) }
+        do {
+            let settings = UserDefaults.standard
+            try launch(Handoff.newThread(task: task, token: token, helper: helper, database: customDatabase,
+                                         projectFolder: settings.string(forKey: CodexProjectSettings.folderKey) ?? "",
+                                         projectID: settings.string(forKey: CodexProjectSettings.idKey) ?? ""))
+        }
         catch { try store.cancelSetup(task.id, token: token); throw error }
     }
 
@@ -309,6 +314,9 @@ enum OutcomeScope: Equatable {
                 Button("New Task") { desk.newTask() }.keyboardShortcut("n")
                 Button("Refresh Tasks") { desk.refresh() }.keyboardShortcut("r")
             }
+        }
+        Settings {
+            CodexProjectSettings()
         }
     }
 }

@@ -131,11 +131,23 @@ struct StoreTests {
         #expect(link.scheme == "codex")
         #expect(link.host == "new")
         #expect(params.first(where: { $0.name == "path" })?.value == item.workspace)
-        #expect(params[0].value!.contains(item.title))
+        #expect(params[0].value!.hasPrefix(item.title + "\n\n"))
+        #expect(params[0].value!.contains("set_thread_title"))
         #expect(params[0].value!.contains("get 3"))
         #expect(params[0].value!.contains("thread-bind 3"))
         #expect(params[0].value!.contains("agent-propose"))
+        let folder = item.workspace
         item.workspace = "/missing/" + UUID().uuidString
+        let project = UUID().uuidString.lowercased()
+        let configured = try Handoff.newThread(task: item, token: UUID(), helper: URL(fileURLWithPath: "/tool"),
+                                               projectFolder: folder, projectID: project)
+        let configuredItems = URLComponents(url: configured, resolvingAgainstBaseURL: false)?.queryItems
+        #expect(configuredItems?.contains(URLQueryItem(name: "projectId", value: project)) == true)
+        #expect(configuredItems?.contains(URLQueryItem(name: "path", value: folder)) == true)
+        #expect(throws: DeskError.self) {
+            try Handoff.newThread(task: item, token: UUID(), helper: URL(fileURLWithPath: "/tool"),
+                                  projectFolder: folder, projectID: "invalid")
+        }
         #expect(throws: DeskError.self) { try Handoff.newThread(task: item, token: UUID(), helper: URL(fileURLWithPath: "/tool")) }
     }
 }
