@@ -205,7 +205,7 @@ public final class TaskStore {
         let fields: [(String, Bool)] = [
             ("outcome", old.outcomeID != new.outcomeID), ("title", old.title != new.title), ("project or customer", old.group != new.group), ("owner", old.owner != new.owner),
             ("collaborators", old.collaborators != new.collaborators), ("status to " + new.status.rawValue, old.status != new.status),
-            ("priority", old.priority != new.priority), ("due date", old.dueDate != new.dueDate),
+            ("focus", old.focus != new.focus), ("priority", old.priority != new.priority), ("due date", old.dueDate != new.dueDate),
             ("follow-up", old.followUpDate != new.followUpDate), ("next actions", old.actions != new.actions),
             ("context", old.context != new.context), ("completion criteria", old.doneWhen != new.doneWhen),
             ("latest update", old.latestUpdate != new.latestUpdate), ("sources", old.references != new.references),

@@ -171,26 +171,43 @@ struct WorkspaceView: View {
         let tasks = desk.visible
         return Table(of: WorkItem.self, selection: $desk.selection, sortOrder: $desk.sortOrder) {
             TableColumn("Task", value: \.title) { item in
-                Button { desk.selection = item.id; desk.detailID = item.id } label: {
-                    Text(item.title).fontWeight(.medium).lineLimit(1)
-                }.buttonStyle(.plain).help("Open " + item.title)
-            }.width(min: 145, ideal: 215)
-            TableColumn("Project / Customer", value: \.groupName) { item in
-                Text(item.group.name.isEmpty ? "—" : item.group.name).lineLimit(1)
-                    .help(item.group.kind.rawValue + " · " + item.group.name)
-            }.width(min: 105, ideal: 135)
+                HStack(spacing: 4) {
+                    TaskCell(item: item, field: .title)
+                    Button { desk.selection = item.id; desk.detailID = item.id } label: {
+                        Image(systemName: "arrow.up.right.square").foregroundStyle(Ink.muted)
+                    }.buttonStyle(.plain).accessibilityLabel("Open " + item.title).help("Open task details")
+                }
+            }.width(min: 135, ideal: 205)
+            TableColumn("Focus", value: \.focusRank) { item in
+                Toggle("Focus", isOn: Binding(get: { item.focus }, set: { desk.updateCell(item, \.focus, to: $0) }))
+                    .toggleStyle(.checkbox).labelsHidden().accessibilityLabel("Focus on " + item.title)
+            }.width(48)
+            TableColumn("Project / Customer", value: \.groupName) { TaskCell(item: $0, field: .group) }
+                .width(min: 100, ideal: 125)
             TableColumn("Status", value: \.statusRank) { item in
-                HStack(spacing: 5) { Circle().fill(statusColor(item.status)).frame(width: 6, height: 6); Text(item.status.rawValue) }
-            }.width(min: 85, ideal: 95)
+                Menu {
+                    ForEach(Status.allCases, id: \.self) { status in
+                        Button(status.rawValue) { desk.updateCell(item, \.status, to: status) }
+                    }
+                } label: {
+                    HStack(spacing: 5) {
+                        Circle().fill(statusColor(item.status)).frame(width: 6, height: 6)
+                        Text(item.status.rawValue).lineLimit(1)
+                    }
+                }.menuStyle(.borderlessButton).help("Change status")
+            }.width(min: 88, ideal: 106)
             TableColumn("Priority", value: \.priorityRank) { item in
-                Text(item.priority.rawValue)
-            }.width(min: 58, ideal: 66)
-            TableColumn("Next with", value: \.nextPerson) { item in
-                Text(item.nextPerson.isEmpty ? "—" : item.nextPerson).lineLimit(1).help(item.nextPerson)
-            }.width(min: 80, ideal: 110)
-            TableColumn("Due date", value: \.dueSort) { item in
-                Text(item.dueDate.isEmpty ? "—" : item.dueDate).monospacedDigit()
-            }.width(min: 85, ideal: 95)
+                Menu {
+                    ForEach(Priority.allCases, id: \.self) { priority in
+                        Button(priority.rawValue) { desk.updateCell(item, \.priority, to: priority) }
+                    }
+                } label: { Text(item.priority.rawValue) }
+                    .menuStyle(.borderlessButton).help("Change priority")
+            }.width(min: 67, ideal: 75)
+            TableColumn("Next step owner", value: \.nextStepOwner) { TaskCell(item: $0, field: .actions) }
+                .width(min: 108, ideal: 122)
+            TableColumn("Due date", value: \.dueSort) { TaskCell(item: $0, field: .date) }
+                .width(min: 85, ideal: 95)
         } rows: {
             if groupTasksByOutcome && desk.queue != .outcomes {
                 ForEach(OutcomeTaskSection.group(tasks, by: desk.outcomes)) { section in

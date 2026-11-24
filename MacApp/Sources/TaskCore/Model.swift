@@ -56,6 +56,7 @@ public struct WorkItem: Codable, Identifiable, Equatable {
     public var collaborators: [String] = []
     public var status = Status.todo
     public var priority = Priority.medium
+    public var focus = false
     public var dueDate = ""
     public var followUpDate = ""
     public var createdAt = ""
@@ -68,6 +69,30 @@ public struct WorkItem: Codable, Identifiable, Equatable {
     public var agentInstructions = ""
     public var workspace = ""
     public init() {}
+    public init(from decoder: Decoder) throws {
+        let fields = try decoder.container(keyedBy: CodingKeys.self)
+        id = try fields.decode(Int.self, forKey: .id)
+        version = try fields.decode(Int.self, forKey: .version)
+        title = try fields.decode(String.self, forKey: .title)
+        group = try fields.decode(TaskGroup.self, forKey: .group)
+        outcomeID = try fields.decodeIfPresent(Int.self, forKey: .outcomeID)
+        owner = try fields.decode(String.self, forKey: .owner)
+        collaborators = try fields.decode([String].self, forKey: .collaborators)
+        status = try fields.decode(Status.self, forKey: .status)
+        priority = try fields.decode(Priority.self, forKey: .priority)
+        focus = try fields.decodeIfPresent(Bool.self, forKey: .focus) ?? false
+        dueDate = try fields.decode(String.self, forKey: .dueDate)
+        followUpDate = try fields.decode(String.self, forKey: .followUpDate)
+        createdAt = try fields.decode(String.self, forKey: .createdAt)
+        updatedAt = try fields.decode(String.self, forKey: .updatedAt)
+        actions = try fields.decode([ActionItem].self, forKey: .actions)
+        context = try fields.decode(String.self, forKey: .context)
+        doneWhen = try fields.decode(String.self, forKey: .doneWhen)
+        latestUpdate = try fields.decode(String.self, forKey: .latestUpdate)
+        references = try fields.decode(String.self, forKey: .references)
+        agentInstructions = try fields.decode(String.self, forKey: .agentInstructions)
+        workspace = try fields.decode(String.self, forKey: .workspace)
+    }
     public var label: String { "T-" + String(format: "%03d", id) }
     public var openActions: [ActionItem] { actions.filter { !$0.completed } }
 }

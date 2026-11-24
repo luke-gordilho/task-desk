@@ -26,15 +26,20 @@ struct FilterPanel: View {
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
+                    Picker("Focus", selection: $desk.filters.focus) {
+                        Text("Any").tag(nil as Bool?)
+                        Text("In focus").tag(Optional(true))
+                        Text("Off focus").tag(Optional(false))
+                    }
                     outcomeChoices
                     choices("Status", Status.allCases.filter { desk.queue.includes($0) || desk.filters.statuses.contains($0) },
                             $desk.filters.statuses) { $0.rawValue }
                     choices("Priority", Priority.allCases, $desk.filters.priorities) { $0.rawValue }
                     choices("Work type", GroupKind.allCases, $desk.filters.kinds) { $0.rawValue }
                     choices("Project / Customer", groups, $desk.filters.groups) { $0.name + " · " + $0.kind.rawValue }
-                    let names = uniqueNames(desk.tasks.flatMap(\.nextPeople) + desk.filters.people.sorted())
+                    let names = uniqueNames(desk.tasks.map(\.nextStepOwner) + desk.filters.people.sorted())
                     let labels = Dictionary(uniqueKeysWithValues: names.map { ($0.lowercased(), $0) })
-                    choices("Next with", labels.keys.sorted(), $desk.filters.people) { labels[$0] ?? $0 }
+                    choices("Next step owner", labels.keys.sorted(), $desk.filters.people) { labels[$0] ?? $0 }
                 }.padding(.trailing, 8).frame(maxWidth: .infinity, alignment: .leading)
             }.frame(height: 265)
         }.padding(16).frame(width: 350).background(Ink.surface)

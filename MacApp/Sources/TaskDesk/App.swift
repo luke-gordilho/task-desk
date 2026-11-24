@@ -28,32 +28,33 @@ enum Queue: String, CaseIterable, Identifiable {
 }
 extension WorkItem {
     var groupName: String { group.name }
+    var focusRank: Int { focus ? 0 : 1 }
     var priorityRank: Int { Priority.allCases.firstIndex(of: priority) ?? 0 }
     var statusRank: Int { Status.allCases.firstIndex(of: status) ?? 0 }
     var dueSort: String { dueDate.isEmpty ? "9999-99-99" : dueDate }
-    var nextPeople: [String] {
-        var seen = Set<String>()
-        return openActions.map { $0.assignee.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty && seen.insert($0.lowercased()).inserted }
+    var nextStep: ActionItem? { actions.first { !$0.completed } }
+    var nextStepOwner: String {
+        nextStep?.assignee.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     }
-    var nextPerson: String { nextPeople.joined(separator: ", ") }
 }
 enum DeskSort: String, CaseIterable {
     case priority = "Priority", due = "Due date", title = "Task", group = "Project / Customer"
-    case status = "Status", person = "Next with", updated = "Last updated"
+    case focus = "Focus", status = "Status", person = "Next step owner", updated = "Last updated"
     var comparator: KeyPathComparator<WorkItem> {
         switch self {
+        case .focus: return KeyPathComparator(\.focusRank)
         case .priority: return KeyPathComparator(\.priorityRank)
         case .due: return KeyPathComparator(\.dueSort)
         case .title: return KeyPathComparator(\.title)
         case .group: return KeyPathComparator(\.groupName)
         case .status: return KeyPathComparator(\.statusRank)
-        case .person: return KeyPathComparator(\.nextPerson)
+        case .person: return KeyPathComparator(\.nextStepOwner)
         case .updated: return KeyPathComparator(\.updatedAt, order: .reverse)
         }
     }
 }
 struct TaskFilters: Equatable, Codable {
+    var focus: Bool?
     var statuses: Set<Status> = []
     var priorities: Set<Priority> = []
     var kinds: Set<GroupKind> = []
@@ -65,6 +66,7 @@ struct TaskFilters: Equatable, Codable {
 
     init(from decoder: Decoder) throws {
         let fields = try decoder.container(keyedBy: CodingKeys.self)
+        focus = try fields.decodeIfPresent(Bool.self, forKey: .focus)
         statuses = try fields.decode(Set<Status>.self, forKey: .statuses)
         priorities = try fields.decode(Set<Priority>.self, forKey: .priorities)
         kinds = try fields.decode(Set<GroupKind>.self, forKey: .kinds)
@@ -73,15 +75,16 @@ struct TaskFilters: Equatable, Codable {
         outcomeIDs = try fields.decodeIfPresent(Set<Int?>.self, forKey: .outcomeIDs) ?? []
     }
 
-    var count: Int { statuses.count + priorities.count + kinds.count + groups.count + people.count + outcomeIDs.count }
+    var count: Int { statuses.count + priorities.count + kinds.count + groups.count + people.count + outcomeIDs.count + (focus == nil ? 0 : 1) }
 
     func includes(_ item: WorkItem) -> Bool {
-        (statuses.isEmpty || statuses.contains(item.status))
+        (focus == nil || focus == item.focus)
+        && (statuses.isEmpty || statuses.contains(item.status))
         && (priorities.isEmpty || priorities.contains(item.priority))
         && (kinds.isEmpty || kinds.contains(item.group.kind))
         && (outcomeIDs.isEmpty || outcomeIDs.contains(item.outcomeID))
         && (groups.isEmpty || groups.contains(item.group))
-        && (people.isEmpty || item.nextPeople.contains { people.contains($0.lowercased()) })
+        && (people.isEmpty || people.contains(item.nextStepOwner.lowercased()))
     }
 }
 
@@ -229,6 +232,17 @@ enum OutcomeScope: Equatable {
         selection = item.id
         if detailID != nil { detailID = item.id }
     }
+    func saveTableEdit(_ draft: WorkItem) throws {
+        defer { refresh() }
+        _ = try reviewStore().save(draft, actor: "Luke")
+    }
+
+    func updateCell<Value>(_ item: WorkItem, _ key: WritableKeyPath<WorkItem, Value>, to value: Value) {
+        var draft = item
+        draft[keyPath: key] = value
+        do { try saveTableEdit(draft) } catch { self.error = error.localizedDescription }
+    }
+
     func setStatus(_ status: Status, for item: WorkItem) {
         var draft = item
         draft.status = status

@@ -4,6 +4,43 @@ import TaskCore
 @testable import TaskDesk
 
 struct FilterTests {
+    @Test func focusIsIndependentAndOlderTasksDefaultToOff() throws {
+        let encoder = JSONEncoder(), decoder = JSONDecoder()
+        var old = try #require(JSONSerialization.jsonObject(with: encoder.encode(WorkItem())) as? [String: Any])
+        old.removeValue(forKey: "focus")
+        var task = try decoder.decode(WorkItem.self, from: JSONSerialization.data(withJSONObject: old))
+        #expect(!task.focus)
+        task.status = .blocked
+        task.focus = true
+        #expect(try decoder.decode(WorkItem.self, from: encoder.encode(task)) == task)
+        var filters = TaskFilters()
+        filters.focus = true
+        #expect(try decoder.decode(TaskFilters.self, from: encoder.encode(filters)).includes(task))
+        filters.focus = false
+        #expect(!filters.includes(task))
+        task.focus = false
+        #expect(filters.includes(task) && task.status == .blocked)
+    }
+
+    @Test func nextStepOwnerFollowsChecklistOrder() {
+        var task = WorkItem()
+        task.actions = [ActionItem(title: "Merge into dev", assignee: " Gabriel "),
+                        ActionItem(title: "Test the feature", assignee: "Luke")]
+        var filters = TaskFilters()
+        filters.people = ["gabriel"]
+        #expect(task.nextStepOwner == "Gabriel" && filters.includes(task))
+        filters.people = ["luke"]
+        #expect(!filters.includes(task))
+        task.actions[0].assignee = ""
+        #expect(task.nextStepOwner.isEmpty && !filters.includes(task))
+        task.actions[0].completed = true
+        #expect(task.nextStepOwner == "Luke" && filters.includes(task))
+        task.actions[1].completed = true
+        #expect(task.nextStep == nil && !filters.includes(task))
+        task.actions[0].completed = false
+        #expect(task.nextStep?.title == "Merge into dev")
+    }
+
     @Test func multipleOutcomesAndUnassignedSurviveSaving() throws {
         var filters = TaskFilters()
         filters.priorities = [.high]

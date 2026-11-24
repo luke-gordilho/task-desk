@@ -31,6 +31,7 @@ struct TaskDetail: View {
                             Button(parent.name) { desk.showOutcome(.outcome(parent.id)) }.buttonStyle(.link)
                         }
                     }
+                    info("Focus", item.focus ? "On" : "Off")
                     info("Owner", item.owner)
                     info(item.group.kind.rawValue, item.group.name)
                     info("Helping", item.collaborators.joined(separator: ", "))

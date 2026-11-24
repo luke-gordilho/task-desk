@@ -26,6 +26,7 @@ private func changes(from base: WorkItem, to item: WorkItem, outcomes: [Outcome]
     add("Title", base.title, item.title)
     add("Project / Customer", group(base), group(item))
     add("Status", base.status.rawValue, item.status.rawValue)
+    if !new || item.focus { add("Focus", base.focus ? "On" : "Off", item.focus ? "On" : "Off") }
     add("Priority", base.priority.rawValue, item.priority.rawValue)
     add("Owner", base.owner, item.owner)
     add("Collaborators", base.collaborators.joined(separator: ", "), item.collaborators.joined(separator: ", "))

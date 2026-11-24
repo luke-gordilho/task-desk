@@ -20,17 +20,6 @@ struct TaskEditor: View {
         _draft = State(initialValue: draft)
         _people = State(initialValue: draft.collaborators.joined(separator: ", "))
     }
-    private var groupChoices: [String] {
-        uniqueNames(desk.tasks.filter { $0.group.kind == draft.group.kind }.map(\.group.name))
-            .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
-    }
-    private func selectionMenu<Choices: View>(_ label: String, isEmpty: Bool, @ViewBuilder choices: () -> Choices) -> some View {
-        Menu {
-            choices()
-        } label: {
-            Image(systemName: "chevron.down.circle")
-        }.menuIndicator(.hidden).fixedSize().disabled(isEmpty).accessibilityLabel(label).help(label)
-    }
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 14) {
@@ -45,26 +34,7 @@ struct TaskEditor: View {
                 switch tab {
                 case "Next actions":
                     Section("Next actions") {
-                        ForEach($draft.actions) { $action in
-                            VStack(alignment: .leading, spacing: 8) {
-                                HStack {
-                                    Toggle("Completed", isOn: $action.completed).toggleStyle(.checkbox).labelsHidden().accessibilityLabel("Completed")
-                                    TextField("What needs to happen?", text: $action.title).textFieldStyle(.roundedBorder)
-                                    Button { draft.actions.removeAll { $0.id == action.id } } label: { Image(systemName: "minus.circle") }
-                                        .buttonStyle(.borderless).help("Remove action")
-                                }
-                                HStack {
-                                    Text("Whose turn?").foregroundStyle(.secondary)
-                                    TextField("Name, Luke, or Dot", text: $action.assignee).textFieldStyle(.roundedBorder)
-                                    Menu {
-                                        ForEach(Array(Set(["Luke", "Dot", "Claude", draft.owner] + people.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) })).filter { !$0.isEmpty }.sorted(), id: \.self) { name in
-                                            Button(name) { action.assignee = name }
-                                        }
-                                    } label: { Image(systemName: "person.crop.circle") }.fixedSize().help("Choose a person")
-                                }
-                            }.padding(.vertical, 4)
-                        }
-                        Button { draft.actions.append(ActionItem()) } label: { Label("Add action", systemImage: "plus") }
+                        ActionFields(draft: $draft, suggestions: desk.knownPeople + people.components(separatedBy: ","))
                     }
                 case "Context":
                     Section("Task brief") {
@@ -95,22 +65,13 @@ struct TaskEditor: View {
                             ForEach(desk.outcomes) { Text($0.displayName).tag(Optional($0.id)) }
                         }
                         Picker("Status", selection: $draft.status) { ForEach(Status.allCases, id: \.self) { Text($0.rawValue) } }
+                        Toggle("Focus", isOn: $draft.focus)
                         Picker("Priority", selection: $draft.priority) { ForEach(Priority.allCases, id: \.self) { Text($0.rawValue) } }
                     }
                     Section("People and work") {
                         TextField("Owner", text: $draft.owner)
                         PeopleField(label: "Collaborators", text: $people, suggestions: desk.knownPeople)
-                        Picker("Task for", selection: $draft.group.kind) {
-                            ForEach(GroupKind.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-                        }.pickerStyle(.segmented)
-                        HStack {
-                            TextField(draft.group.kind.rawValue + " name", text: $draft.group.name)
-                            selectionMenu("Choose a saved " + draft.group.kind.rawValue.lowercased(), isEmpty: groupChoices.isEmpty) {
-                                ForEach(groupChoices, id: \.self) { name in
-                                    Button(name) { draft.group.name = name }
-                                }
-                            }
-                        }
+                        GroupFields(draft: $draft)
                     }
                     Section("Dates") {
                         OptionalDate(label: "Due date", value: $draft.dueDate)
@@ -144,6 +105,62 @@ struct TaskEditor: View {
         }
     }
 }
+struct ActionFields: View {
+    @Binding var draft: WorkItem
+    let suggestions: [String]
+    var body: some View {
+        ForEach($draft.actions) { $action in
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Toggle("Completed", isOn: $action.completed).toggleStyle(.checkbox).labelsHidden().accessibilityLabel("Completed")
+                    TextField("What needs to happen?", text: $action.title).textFieldStyle(.roundedBorder)
+                    Button { draft.actions.removeAll { $0.id == action.id } } label: { Image(systemName: "minus.circle") }
+                        .buttonStyle(.borderless).help("Remove action")
+                }
+                HStack {
+                    Text("Whose turn?").foregroundStyle(.secondary)
+                    TextField("Name, Luke, or Dot", text: $action.assignee).textFieldStyle(.roundedBorder)
+                    Menu {
+                        ForEach(uniqueNames(["Luke", "Dot", "Claude", draft.owner] + suggestions).sorted(), id: \.self) { name in
+                            Button(name) { action.assignee = name }
+                        }
+                    } label: { Image(systemName: "person.crop.circle") }.fixedSize().help("Choose a person")
+                }
+            }.padding(.vertical, 4)
+        }
+        Button { draft.actions.append(ActionItem()) } label: { Label("Add action", systemImage: "plus") }
+    }
+}
+
+struct GroupFields: View {
+    @EnvironmentObject var desk: Desk
+    @Binding var draft: WorkItem
+    private var groupChoices: [String] {
+        uniqueNames(desk.tasks.filter { $0.group.kind == draft.group.kind }.map(\.group.name))
+            .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    }
+    private func selectionMenu<Choices: View>(_ label: String, isEmpty: Bool, @ViewBuilder choices: () -> Choices) -> some View {
+        Menu {
+            choices()
+        } label: {
+            Image(systemName: "chevron.down.circle")
+        }.menuIndicator(.hidden).fixedSize().disabled(isEmpty).accessibilityLabel(label).help(label)
+    }
+    var body: some View {
+        Picker("Task for", selection: $draft.group.kind) {
+            ForEach(GroupKind.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+        }.pickerStyle(.segmented)
+        HStack {
+            TextField(draft.group.kind.rawValue + " name", text: $draft.group.name)
+            selectionMenu("Choose a saved " + draft.group.kind.rawValue.lowercased(), isEmpty: groupChoices.isEmpty) {
+                ForEach(groupChoices, id: \.self) { name in
+                    Button(name) { draft.group.name = name }
+                }
+            }
+        }
+    }
+}
+
 struct PeopleField: View {
     let label: String
     @Binding var text: String
@@ -174,7 +191,7 @@ struct OptionalDate: View {
     @Binding var value: String
     @EditorState private var showingCalendar = false
     @EditorState private var selection = Date()
-    private static let format: DateFormatter = {
+    static let format: DateFormatter = {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
         f.dateFormat = "yyyy-MM-dd"
