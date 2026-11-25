@@ -37,6 +37,40 @@ public struct ClaudeChat: Equatable {
         } else { throw invalid }
     }
 
+    // Claude Desktop gives the same conversation a local routing ID and a different CLI UUID.
+    // Resolve pasted UUIDs once so the stored URL always points to the original desktop chat.
+    public static func existing(_ input: String, sessionDirectory: URL? = nil) throws -> ClaudeChat {
+        let value = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let uuid = UUID(uuidString: value) else { return try ClaudeChat(value) }
+
+        struct SessionIDs: Decodable {
+            let sessionId: String
+            let cliSessionId: UUID?
+        }
+        let files = FileManager.default
+        let root = sessionDirectory ?? files.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Claude/claude-code-sessions", isDirectory: true)
+        let missing = DeskError("Open this session in Claude Code Desktop and try again, or paste its desktop session link.")
+        guard let entries = files.enumerator(at: root, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]) else {
+            throw missing
+        }
+        let localID = "local_" + uuid.uuidString.lowercased()
+        var matches = Set<String>()
+        for case let file as URL in entries where entries.level == 3 {
+            entries.skipDescendants()
+            guard file.lastPathComponent.hasPrefix("local_"), file.pathExtension == "json",
+                  let data = try? Data(contentsOf: file, options: .mappedIfSafe),
+                  let ids = try? JSONDecoder().decode(SessionIDs.self, from: data),
+                  ids.sessionId == file.deletingPathExtension().lastPathComponent,
+                  let chat = try? ClaudeChat(ids.sessionId),
+                  ids.cliSessionId == uuid || chat.sessionID == localID else { continue }
+            matches.insert(chat.sessionID)
+        }
+        guard let match = matches.first else { throw missing }
+        guard matches.count == 1 else { throw DeskError("Several Claude chats match this UUID. Paste the desktop link for the one you want.") }
+        return try ClaudeChat(match)
+    }
+
     public var url: URL {
         let path = sessionID.hasPrefix("local_") ? "continue?session=" + sessionID : sessionID
         return URL(string: "claude://code/" + path)!

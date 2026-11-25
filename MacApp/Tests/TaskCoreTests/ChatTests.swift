@@ -101,4 +101,33 @@ struct ChatTests {
         #expect(try otherClient.inbox().isEmpty)
     }
 
+    @Test func pastedClaudeUUIDResolvesToPersistentDesktopLink() throws {
+        let temp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: temp) }
+        let root = temp.appendingPathComponent("claude-code-sessions")
+        let profile = root.appendingPathComponent("account/org")
+        try FileManager.default.createDirectory(at: profile, withIntermediateDirectories: true)
+        let cliID = UUID(), desktopID = UUID()
+        func writeSession(_ desktop: UUID) throws -> ClaudeChat {
+            let chat = try ClaudeChat("local_" + desktop.uuidString)
+            let metadata = ["cliSessionId": cliID.uuidString.lowercased(), "sessionId": chat.sessionID]
+            try JSONEncoder().encode(metadata).write(to: profile.appendingPathComponent(chat.sessionID + ".json"))
+            return chat
+        }
+        let expected = try writeSession(desktopID)
+        let address = try ClaudeChat.existing(" " + cliID.uuidString + "\n", sessionDirectory: root)
+        #expect(address == expected)
+        #expect(try ClaudeChat.existing(desktopID.uuidString, sessionDirectory: root) == expected)
+        #expect(throws: DeskError.self) { try ClaudeChat.existing(UUID().uuidString, sessionDirectory: root) }
+        let store = try TaskStore(url: temp.appendingPathComponent("test.sqlite3"))
+        var item = WorkItem()
+        item.title = "Fixture"
+        let task = try store.save(item, actor: "Luke")
+        try store.bindClaudeChat(task.id, address: address)
+        #expect(try store.chatURL(task.id, provider: .claude) == expected.url)
+        _ = try writeSession(UUID())
+        #expect(throws: DeskError.self) { try ClaudeChat.existing(cliID.uuidString, sessionDirectory: root) }
+        #expect(try ClaudeChat.existing(expected.url.absoluteString, sessionDirectory: root) == expected)
+    }
+
 }

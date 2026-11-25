@@ -63,7 +63,7 @@ struct ChatSetupView: View {
                 Text("A setup composer is open. Send its prefilled message to finish linking, or paste the existing chat link above.")
                 Button("Cancel unfinished setup") { run { try desk.reviewStore().cancelSetup(task.id, provider: provider); pending = false } }
             }
-            if !message.isEmpty { Text(message).foregroundStyle(Ink.danger) }
+            if !message.isEmpty { Text(message).foregroundStyle(Ink.danger).fixedSize(horizontal: false, vertical: true) }
             HStack {
                 Button("Close") { dismiss() }
                 Spacer()
@@ -75,14 +75,14 @@ struct ChatSetupView: View {
                         let store = try desk.reviewStore()
                         switch provider {
                         case .codex: try store.bindChat(task.id, address: ChatAddress(input))
-                        case .claude: try store.bindClaudeChat(task.id, address: ClaudeChat(input))
+                        case .claude: try store.bindClaudeChat(task.id, address: ClaudeChat.existing(input))
                         }
                         dismiss()
                         desk.open(task, provider: provider)
                     }
                 }.disabled(input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
-        }.padding(22).frame(width: 490)
+        }.padding(22).frame(width: 490).fixedSize(horizontal: false, vertical: true)
         .onAppear { run { pending = try desk.reviewStore().setupPending(task.id, provider: provider) } }
     }
 }
