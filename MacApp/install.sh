@@ -12,6 +12,8 @@ install -m755 "$bin/TaskDesk" "$app/Contents/MacOS/TaskDesk"
 install -m755 "$bin/taskctl" "$app/Contents/Helpers/taskctl"
 sips -s format png -Z 620 Branding/movedot-wordmark.svg --out "$app/Contents/Resources/Wordmark.png" >/dev/null
 sips -s format png -z 1024 1024 Branding/movedot-icon.svg --out "$stage/icon.png" >/dev/null
+install -m644 Branding/chatgpt.png "$app/Contents/Resources/ChatGPT.png"
+sips -s format png Branding/claude-code.svg --out "$app/Contents/Resources/ClaudeCode.png" >/dev/null
 icons="$stage/AppIcon.iconset"
 mkdir "$icons"
 for size in 16 32 128 256 512; do
@@ -34,8 +36,8 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 </dict></array>
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>1.19</string>
-<key>CFBundleVersion</key><string>20</string>
+<key>CFBundleShortVersionString</key><string>1.20</string>
+<key>CFBundleVersion</key><string>21</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>NSHighResolutionCapable</key><true/>
 </dict></plist>

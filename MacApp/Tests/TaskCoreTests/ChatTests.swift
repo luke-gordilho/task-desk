@@ -51,4 +51,54 @@ struct ChatTests {
         try store.delete(live)
         #expect(try second.chat(task.id) == nil && second.brainResults().isEmpty)
     }
+    @Test func independentClaudeAndCodexSessions() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let db = dir.appendingPathComponent("fixture.sqlite3")
+        let store = try TaskStore(url: db), otherClient = try TaskStore(url: db)
+        var draft = WorkItem()
+        draft.title = "Review A+B & follow up"
+        draft.workspace = "/missing-fixture-folder"
+        var task = try store.save(draft, actor: "Luke")
+        let otherTask = try store.save(draft, actor: "Luke")
+        let codex = try ChatAddress(UUID().uuidString)
+        let codexToken = try store.reserveChat(task.id)
+        let token = try store.reserveChat(task.id, provider: .claude)
+        #expect(throws: DeskError.self) { try otherClient.reserveChat(task.id, provider: .claude) }
+        try store.cancelSetup(task.id, provider: .claude, token: token)
+        #expect(try store.setupPending(task.id))
+        let retry = try otherClient.reserveChat(task.id, provider: .claude)
+        let helper = dir.appendingPathComponent("Task Desk.app/Contents/Helpers/taskctl")
+        let link = try Handoff.newClaudeChat(task: task, token: retry, helper: helper, database: db, projectFolder: dir.path)
+        let components = try #require(URLComponents(url: link, resolvingAgainstBaseURL: false))
+        #expect(components.scheme == "claude" && components.host == "code" && components.path == "/new")
+        #expect(components.queryItems?.first { $0.name == "folder" }?.value == dir.path)
+        let prompt = try #require(components.queryItems?.first { $0.name == "q" }?.value)
+        #expect(prompt.hasPrefix(task.title) && prompt.contains("claude-bind \(task.id) \(retry)"))
+        #expect(prompt.contains("agent-propose") && prompt.contains("TASKDESK_DB="))
+        #expect(throws: DeskError.self) { try Handoff.newClaudeChat(task: task, token: retry, helper: helper) }
+        let chat = try ClaudeChat("local_" + UUID().uuidString)
+        #expect(try ClaudeChat(chat.url.absoluteString) == chat)
+        #expect(throws: DeskError.self) { try store.bindClaudeChat(task.id, address: chat, token: token) }
+        try store.bindClaudeChat(task.id, address: chat, token: retry)
+        try otherClient.bindClaudeChat(task.id, address: chat, token: retry)
+        try store.bindChat(task.id, address: codex, token: codexToken)
+        #expect(throws: DeskError.self) { try store.bindClaudeChat(otherTask.id, address: chat) }
+        let cloud = try ClaudeChat("https://claude.ai/code/session_TestFixture")
+        #expect(try ClaudeChat("cse_TestFixture") == cloud)
+        #expect(try ClaudeChat(cloud.url.absoluteString) == cloud)
+        #expect(throws: DeskError.self) { try store.bindClaudeChat(task.id, address: cloud) }
+        for bad in ["claude://code/new", "claude://code/continue?session=last", codex.url.absoluteString,
+                    "https://unrelated.example/code/session_TestFixture"] {
+            #expect(throws: DeskError.self) { try ClaudeChat(bad) }
+        }
+        task.title = "Changed title"
+        task = try store.save(task, actor: "Luke")
+        #expect(try otherClient.chatURL(task.id, provider: .claude) == chat.url)
+        #expect(try otherClient.chat(task.id) == codex)
+        try store.delete(task)
+        #expect(try otherClient.chatURL(task.id, provider: .claude) == nil)
+        #expect(try otherClient.inbox().isEmpty)
+    }
+
 }

@@ -134,7 +134,7 @@ enum OutcomeScope: Equatable {
     @Published var outcomeScope: OutcomeScope = .overview
     @Published var editOutcome: Outcome?
     @Published var pendingOutcomeDelete: Outcome?
-    @Published var setupTask: WorkItem?
+    @Published var setupTask: ChatSetup?
     @Published var results: [BrainResult] = []
     @Published var proposals: [Proposal] = []
     @Published var tasks: [WorkItem] = []
@@ -330,27 +330,33 @@ enum OutcomeScope: Equatable {
     private var helper: URL { Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/taskctl") }
     private var customDatabase: URL? { ProcessInfo.processInfo.environment["TASKDESK_DB"].map { URL(fileURLWithPath: $0) } }
 
-    private func launch(_ url: URL) throws {
-        guard NSWorkspace.shared.open(url) else { throw DeskError("Codex could not open this link on the Mac.") }
+    private func launch(_ url: URL, provider: ChatProvider = .codex) throws {
+        guard NSWorkspace.shared.open(url) else { throw DeskError("Could not open \(provider.rawValue) on this Mac. Check that its desktop app is installed.") }
     }
 
-    func open(_ task: WorkItem) {
+    func open(_ task: WorkItem, provider: ChatProvider = .codex) {
         do {
-            if let linked = try reviewStore().chat(task.id) { try launch(linked.url) }
-            else { setupTask = task }
+            if let url = try reviewStore().chatURL(task.id, provider: provider) { try launch(url, provider: provider) }
+            else { setupTask = ChatSetup(task: task, provider: provider) }
         } catch { self.error = error.localizedDescription }
     }
 
-    func startSetup(_ task: WorkItem) throws {
+    func startSetup(_ task: WorkItem, provider: ChatProvider) throws {
         let store = try reviewStore()
-        let token = try store.reserveChat(task.id)
+        let token = try store.reserveChat(task.id, provider: provider)
         do {
             let settings = UserDefaults.standard
-            try launch(Handoff.newThread(task: task, token: token, helper: helper, database: customDatabase,
-                                         projectFolder: settings.string(forKey: CodexProjectSettings.folderKey) ?? "",
-                                         projectID: settings.string(forKey: CodexProjectSettings.idKey) ?? ""))
-        }
-        catch { try store.cancelSetup(task.id, token: token); throw error }
+            let folder = settings.string(forKey: CodexProjectSettings.folderKey) ?? ""
+            let url: URL
+            switch provider {
+            case .codex:
+                url = try Handoff.newThread(task: task, token: token, helper: helper, database: customDatabase,
+                                            projectFolder: folder, projectID: settings.string(forKey: CodexProjectSettings.idKey) ?? "")
+            case .claude:
+                url = try Handoff.newClaudeChat(task: task, token: token, helper: helper, database: customDatabase, projectFolder: folder)
+            }
+            try launch(url, provider: provider)
+        } catch { try store.cancelSetup(task.id, provider: provider, token: token); throw error }
     }
 
     func openResult(_ result: BrainResult) {

@@ -9,6 +9,7 @@ taskctl outcomes                   List outcomes and their IDs\ntaskctl get ID  
 taskctl create                     Queue an AI draft from stdin in the Inbox
 taskctl update ID VERSION          Queue proposed task changes from stdin
 taskctl agent-propose KEY ID VERSION  Queue a JSON patch (0 0 for a draft)
+taskctl claude-bind ID TOKEN       Bind the current Claude Code desktop session
 taskctl thread-get ID              Read the linked Codex address
 taskctl thread-bind ID TOKEN       Bind the setup composer using CODEX_THREAD_ID
 taskctl brain-handoff ID EVENT_UUID  Read an authorized instruction from stdin and prepare a dispatch to the linked chat
@@ -133,6 +134,15 @@ do {
         try store.bindChat(id, address: address, token: token)
         try output(address)
         try wakeDesk()
+    case ("claude-bind", 3):
+        guard let id = Int(args[1]), let token = UUID(uuidString: args[2]) else { throw DeskError(help) }
+        guard let session = ProcessInfo.processInfo.environment["CLAUDE_CODE_HOST_SESSION_ID"],
+              let chat = try? ClaudeChat(session) else {
+            throw DeskError("Open this setup in Claude Code on the Task Desk Mac, or use Link existing chat with its session link.")
+        }
+        try store.bindClaudeChat(id, address: chat, token: token)
+        try output(["url": chat.url.absoluteString])
+        try wakeDesk()
     case ("brain-handoff", 3), ("brain-dispatch", 3):
         guard let id = Int(args[1]), let event = UUID(uuidString: args[2]), let chat = try store.chat(id) else {
             throw DeskError("Supply a task with a linked chat and a stable UUID for this assignment.")
@@ -187,9 +197,10 @@ do {
         else { throw DeskError(help) }
         let canonical = try JSONSerialization.data(withJSONObject: patch, options: [.sortedKeys])
         let digest = SHA256.hash(data: canonical).map { String(format: "%02x", $0) }.joined()
-        let session = (try? boundThreadID()) ?? "agent"
+        let claude = ProcessInfo.processInfo.environment["CLAUDE_CODE_HOST_SESSION_ID"].flatMap { try? ClaudeChat($0) }
+        let session = claude?.sessionID ?? (try? boundThreadID()) ?? "agent"
         let key = "\(session)/\(id)/" + (explicit ? args[1] : "\(version)/\(digest)")
-        let citation = (try? ChatAddress(session)).map { "Codex · " + $0.url.absoluteString } ?? "Agent proposal · " + key
+        let citation = claude.map { "Claude Code · " + $0.url.absoluteString } ?? (try? ChatAddress(session)).map { "Codex · " + $0.url.absoluteString } ?? "Agent proposal · " + key
         let receipt = try store.proposeAgent(key: key, citation: citation, id: id, version: version, fields: Set(patch.keys)) { try applyPatch(patch, to: $0) }
         try output(receipt)
         if receipt.inserted || receipt.updated == true { try wakeDesk() }

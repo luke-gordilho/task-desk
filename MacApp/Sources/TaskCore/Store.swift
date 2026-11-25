@@ -33,6 +33,8 @@ public final class TaskStore {
             body TEXT NOT NULL, notified INTEGER NOT NULL DEFAULT 0, UNIQUE(source,evidence));
         CREATE TABLE IF NOT EXISTS task_chats(task_id INTEGER PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
             reservation TEXT NOT NULL, address TEXT UNIQUE, thread_id TEXT UNIQUE);
+        CREATE TABLE IF NOT EXISTS claude_chats(task_id INTEGER PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+            reservation TEXT NOT NULL, address TEXT UNIQUE, thread_id TEXT UNIQUE);
         CREATE TABLE IF NOT EXISTS brain_dispatches(task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
             event_key TEXT NOT NULL, scope TEXT NOT NULL, state TEXT NOT NULL, PRIMARY KEY(task_id,event_key));
         CREATE TABLE IF NOT EXISTS brain_results(id INTEGER PRIMARY KEY AUTOINCREMENT, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -401,49 +403,65 @@ extension TaskStore {
 
 extension TaskStore {
     public func chat(_ taskID: Int) throws -> ChatAddress? {
-        try rows("SELECT address FROM task_chats WHERE task_id=? AND address IS NOT NULL", [String(taskID)]) {
-            try ChatAddress(field($0, 0))
+        try chatURL(taskID, provider: .codex).map { try ChatAddress($0.absoluteString) }
+    }
+
+    public func chatURL(_ taskID: Int, provider: ChatProvider) throws -> URL? {
+        try rows("SELECT address FROM \(provider.table) WHERE task_id=? AND address IS NOT NULL", [String(taskID)]) { row in
+            let value = field(row, 0)
+            switch provider {
+            case .codex: return try ChatAddress(value).url
+            case .claude: return try ClaudeChat(value).url
+            }
         }.first
     }
 
-    public func setupPending(_ taskID: Int) throws -> Bool {
-        try !rows("SELECT 1 FROM task_chats WHERE task_id=? AND address IS NULL", [String(taskID)]) { _ in true }.isEmpty
+    public func setupPending(_ taskID: Int, provider: ChatProvider = .codex) throws -> Bool {
+        try !rows("SELECT 1 FROM \(provider.table) WHERE task_id=? AND address IS NULL", [String(taskID)]) { _ in true }.isEmpty
     }
 
-    public func reserveChat(_ taskID: Int) throws -> UUID {
+    public func reserveChat(_ taskID: Int, provider: ChatProvider = .codex) throws -> UUID {
         try transaction {
             _ = try get(taskID)
-            guard try chat(taskID) == nil, try !setupPending(taskID) else {
+            guard try chatURL(taskID, provider: provider) == nil, try !setupPending(taskID, provider: provider) else {
                 throw DeskError("Chat setup already started. Finish the open composer or link your existing chat.")
             }
             let token = UUID()
-            try write("INSERT INTO task_chats(task_id,reservation) VALUES(?,?)", [String(taskID),token.uuidString])
+            try write("INSERT INTO \(provider.table)(task_id,reservation) VALUES(?,?)", [String(taskID),token.uuidString])
             return token
         }
     }
 
-    public func cancelSetup(_ taskID: Int, token: UUID? = nil) throws {
-        let sql = "DELETE FROM task_chats WHERE task_id=? AND address IS NULL"
+    public func cancelSetup(_ taskID: Int, provider: ChatProvider = .codex, token: UUID? = nil) throws {
+        let sql = "DELETE FROM \(provider.table) WHERE task_id=? AND address IS NULL"
         if let token { try write(sql + " AND reservation=?", [String(taskID),token.uuidString]) }
         else { try write(sql, [String(taskID)]) }
     }
 
     public func bindChat(_ taskID: Int, address: ChatAddress, token: UUID? = nil) throws {
+        try bind(taskID, provider: .codex, url: address.url, id: address.threadID, token: token)
+    }
+
+    public func bindClaudeChat(_ taskID: Int, address: ClaudeChat, token: UUID? = nil) throws {
+        try bind(taskID, provider: .claude, url: address.url, id: address.sessionID, token: token)
+    }
+
+    private func bind(_ taskID: Int, provider: ChatProvider, url: URL, id: String, token: UUID?) throws {
         try transaction {
             _ = try get(taskID)
-            if let existing = try chat(taskID) {
-                guard existing == address else { throw DeskError("This task already has a different linked chat.") }
+            if let existing = try chatURL(taskID, provider: provider) {
+                guard existing == url else { throw DeskError("This task already has a different linked chat.") }
                 return
             }
             if let token {
-                try write("UPDATE task_chats SET address=?,thread_id=? WHERE task_id=? AND reservation=? AND address IS NULL",
-                          [address.url.absoluteString,address.threadID,String(taskID),token.uuidString])
+                try write("UPDATE \(provider.table) SET address=?,thread_id=? WHERE task_id=? AND reservation=? AND address IS NULL",
+                          [url.absoluteString,id,String(taskID),token.uuidString])
                 guard sqlite3_changes(db) == 1 else { throw DeskError("This chat setup request is no longer current.") }
             } else {
                 try write("""
-                INSERT INTO task_chats(task_id,reservation,address,thread_id) VALUES(?,'',?,?)
+                INSERT INTO \(provider.table)(task_id,reservation,address,thread_id) VALUES(?,'',?,?)
                 ON CONFLICT(task_id) DO UPDATE SET address=excluded.address,thread_id=excluded.thread_id
-                """, [String(taskID),address.url.absoluteString,address.threadID])
+                """, [String(taskID),url.absoluteString,id])
             }
         }
     }

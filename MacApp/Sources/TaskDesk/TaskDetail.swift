@@ -39,7 +39,7 @@ struct TaskDetail: View {
                     info("Follow up", item.followUpDate)
                 }
                 HStack {
-                    Button { desk.open(item) } label: { Label("Open in Codex", systemImage: "arrow.up.forward.app") }
+                    TaskChatButtons(task: item)
                     if let latest = desk.results.first(where: { $0.taskID == item.id && $0.unread }) {
                         Button("Open unread Brain update") { desk.openResult(latest) }
                     }

@@ -11,7 +11,7 @@ struct CodexProjectSettings: View {
 
     var body: some View {
         Form {
-            Section("Default project for new Codex task chats") {
+            Section("Default project for new task chats") {
                 LabeledContent("Project folder") {
                     Text(folder.isEmpty ? "Use task workspace" : folder)
                         .lineLimit(2).truncationMode(.middle).help(folder)
@@ -37,7 +37,14 @@ struct CodexProjectSettings: View {
     }
 }
 
+struct ChatSetup: Identifiable {
+    let task: WorkItem
+    let provider: ChatProvider
+    let id = UUID()
+}
+
 struct ChatSetupView: View {
+    let provider: ChatProvider
     let task: WorkItem
     @EnvironmentObject var desk: Desk
     @Environment(\.dismiss) private var dismiss
@@ -49,30 +56,34 @@ struct ChatSetupView: View {
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Codex chat for " + task.label).font(.title2.bold())
+            Text(provider.rawValue + " chat for " + task.label).font(.title2.bold())
             Text(task.title)
-            TextField("Existing thread ID or codex://threads/ link", text: $input).textFieldStyle(.roundedBorder)
+            TextField(provider == .codex ? "Existing Codex thread ID or link" : "Existing Claude Code session ID or link", text: $input).textFieldStyle(.roundedBorder)
             if pending {
                 Text("A setup composer is open. Send its prefilled message to finish linking, or paste the existing chat link above.")
-                Button("Cancel unfinished setup") { run { try desk.reviewStore().cancelSetup(task.id); pending = false } }
+                Button("Cancel unfinished setup") { run { try desk.reviewStore().cancelSetup(task.id, provider: provider); pending = false } }
             }
             if !message.isEmpty { Text(message).foregroundStyle(Ink.danger) }
             HStack {
                 Button("Close") { dismiss() }
                 Spacer()
                 if !pending {
-                    Button("New Codex chat") { run { try desk.startSetup(task); dismiss() } }
+                    Button("New " + provider.rawValue + " chat") { run { try desk.startSetup(task, provider: provider); dismiss() } }
                 }
                 Button("Link existing chat") {
                     run {
-                        try desk.reviewStore().bindChat(task.id, address: ChatAddress(input))
+                        let store = try desk.reviewStore()
+                        switch provider {
+                        case .codex: try store.bindChat(task.id, address: ChatAddress(input))
+                        case .claude: try store.bindClaudeChat(task.id, address: ClaudeChat(input))
+                        }
                         dismiss()
-                        desk.open(task)
+                        desk.open(task, provider: provider)
                     }
                 }.disabled(input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }.padding(22).frame(width: 490)
-        .onAppear { run { pending = try desk.reviewStore().setupPending(task.id) } }
+        .onAppear { run { pending = try desk.reviewStore().setupPending(task.id, provider: provider) } }
     }
 }
 
@@ -90,7 +101,12 @@ struct BrainUpdatesView: View {
                             if r.unread { Image(systemName: "circle.fill").font(.caption2).foregroundStyle(Ink.info).accessibilityLabel("Unread") }
                             Text(r.title).font(.headline)
                             Spacer()
-                            Button("Open in Codex") { desk.openResult(r) }
+                            Button { desk.openResult(r) } label: {
+                                ChatLogo(provider: .codex).frame(width: 28, height: 24)
+                            }
+                            .buttonStyle(.borderless)
+                            .help("Open result in Codex")
+                            .accessibilityLabel("Open " + r.title + " result in Codex")
                         }
                         Text(r.note.work)
                         Text(r.note.result).fontWeight(.medium)

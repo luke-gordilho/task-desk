@@ -67,7 +67,7 @@ struct WorkspaceView: View {
         .sheet(item: $desk.editOutcome) { outcome in
             OutcomeEditor(outcome: outcome, tasks: desk.tasks).environmentObject(desk).preferredColorScheme(appearance.scheme)
         }
-        .sheet(item: $desk.setupTask) { item in ChatSetupView(task: item).environmentObject(desk) }
+        .sheet(item: $desk.setupTask) { item in ChatSetupView(provider: item.provider, task: item.task).environmentObject(desk) }
         .sheet(item: $desk.edit, onDismiss: { desk.refresh() }) { TaskEditor(draft: $0).environmentObject(desk).preferredColorScheme(appearance.scheme) }
         .alert("Delete outcome?", isPresented: Binding(get: { desk.pendingOutcomeDelete != nil }, set: { if !$0 { desk.pendingOutcomeDelete = nil } }), presenting: desk.pendingOutcomeDelete) { outcome in
             Button("Cancel", role: .cancel) {}
@@ -207,11 +207,9 @@ struct WorkspaceView: View {
                 .width(min: 108, ideal: 110)
             TableColumn("Due date", value: \.dueSort) { TaskCell(item: $0, field: .date) }
                 .width(min: 85, ideal: 95)
-            TableColumn("Codex") { item in
-                Button("Open in Codex") { desk.open(item) }
-                    .buttonStyle(.link)
-                    .accessibilityLabel("Open " + item.title + " in Codex")
-            }.width(96)
+            TableColumn("Open in") { item in
+                TaskChatButtons(task: item)
+            }.width(74)
         } rows: {
             if desk.groupByOutcome && desk.queue != .outcomes {
                 ForEach(OutcomeTaskSection.group(tasks, by: desk.outcomes)) { section in
@@ -234,6 +232,7 @@ struct WorkspaceView: View {
                 } else if item.status != .done {
                     Button("Move to Backlog") { desk.setStatus(.backlog, for: item) }
                 }
+                Button("Open in Claude Code") { desk.open(item, provider: .claude) }
                 Button("Open in Codex") { desk.open(item) }
                 Divider()
                 Button("Delete task…", role: .destructive) { desk.pendingDelete = item }

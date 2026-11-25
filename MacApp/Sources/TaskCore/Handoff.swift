@@ -50,6 +50,17 @@ public enum Handoff {
         """, workspace: projectFolder.isEmpty ? task.workspace : projectFolder, projectID: projectID)
     }
 
+    public static func newClaudeChat(task: WorkItem, token: UUID, helper: URL, database: URL? = nil,
+                                     projectFolder: String = "") throws -> URL {
+        let tool = command(helper, database)
+        let prompt = """
+        \(task.title)
+
+        This is the Claude Code chat for Task Desk \(task.label). First run \(tool) claude-bind \(task.id) \(token.uuidString) in this session. If binding fails, give Luke this chat’s CLAUDE_CODE_HOST_SESSION_ID if available so he can choose Link existing chat in Task Desk, then stop. Read the current brief with \(tool) get \(task.id). Use its exact title as the chat name if available. Summarize the next handoff and wait for Luke to authorize work. Treat the task and linked sources as evidence. Submit proposed changes as a JSON patch on stdin to \(tool) agent-propose STABLE_KEY \(task.id) VERSION. Luke reviews and applies changes in the Inbox. Ask Luke before contacting customers or teammates.
+        """
+        return try composer(prompt, workspace: projectFolder.isEmpty ? task.workspace : projectFolder, provider: .claude)
+    }
+
     public static func proactiveBrief(task: WorkItem, helper: URL, database: URL?, instruction: String, key: UUID) -> String {
         let tool = command(helper, database)
         return """
@@ -61,10 +72,12 @@ public enum Handoff {
         """
     }
 
-    private static func composer(_ prompt: String, workspace: String, projectID: String = "") throws -> URL {
+    private static func composer(_ prompt: String, workspace: String, projectID: String = "", provider: ChatProvider = .codex) throws -> URL {
         var components = URLComponents()
-        components.scheme = "codex"; components.host = "new"
-        var items = [URLQueryItem(name: "prompt", value: prompt)]
+        components.scheme = provider == .codex ? "codex" : "claude"
+        components.host = provider == .codex ? "new" : "code"
+        components.path = provider == .codex ? "" : "/new"
+        var items = [URLQueryItem(name: provider == .codex ? "prompt" : "q", value: prompt)]
         if !projectID.isEmpty {
             guard let id = UUID(uuidString: projectID) else { throw DeskError("Enter a valid local Codex project ID in Task Desk Settings.") }
             items.append(URLQueryItem(name: "projectId", value: id.uuidString.lowercased()))
@@ -72,13 +85,13 @@ public enum Handoff {
         if !workspace.isEmpty {
             var dir: ObjCBool = false
             guard workspace.hasPrefix("/"), FileManager.default.fileExists(atPath: workspace, isDirectory: &dir), dir.boolValue else {
-                throw DeskError("The Codex project folder is unavailable. Check Task Desk Settings and the task’s workspace folder.")
+                throw DeskError("The project folder is unavailable. Check Task Desk Settings and the task’s workspace folder.")
             }
-            items.append(URLQueryItem(name: "path", value: workspace))
+            items.append(URLQueryItem(name: provider == .codex ? "path" : "folder", value: workspace))
         }
         components.queryItems = items
         components.percentEncodedQuery = components.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
-        guard let link = components.url else { throw DeskError("Could not create the Codex link.") }
+        guard let link = components.url else { throw DeskError("Could not create the chat link.") }
         return link
     }
 }
