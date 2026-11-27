@@ -131,6 +131,46 @@ struct FilterTests {
         #expect(reopened.search == "old" && reopened.sortOrder == sorts && !reopened.groupByOutcome)
     }
 
+    @MainActor @Test func tasksCanIncludeBacklogAndDoneInStatusOrder() throws {
+        let suite = "TaskDeskTests." + UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
+        defer {
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: dir)
+        }
+        let store = try TaskStore(url: dir.appendingPathComponent("tasks.sqlite3"))
+        for status in Status.allCases.reversed() {
+            var item = WorkItem()
+            item.title = status.rawValue
+            item.status = status
+            _ = try store.save(item, actor: "Test")
+        }
+        let desk = Desk(defaults: defaults, store: store)
+        desk.sortOrder = [DeskSort.status.comparator]
+        #expect(desk.visible.map(\.status) == [.active, .todo, .blocked])
+        desk.filters.statusSelection = Queue.active.defaultStatuses.union([.backlog])
+        #expect(desk.visible.map(\.status) == [.active, .todo, .blocked, .backlog])
+        desk.filters.statusSelection = Queue.active.defaultStatuses.union([.done])
+        #expect(desk.visible.map(\.status) == [.active, .todo, .blocked, .done])
+        desk.filters.statusSelection = Set(Status.allCases)
+        #expect(desk.visible.map(\.status) == [.active, .todo, .blocked, .backlog, .done])
+        desk.sortOrder[0].order = .reverse
+        try desk.saveVisualization(named: "All statuses")
+        let reopened = Desk(defaults: defaults, store: store)
+        reopened.apply(try #require(reopened.visualizations.first))
+        #expect(reopened.visible.map(\.status) == [.done, .backlog, .blocked, .todo, .active])
+        reopened.queue = .backlog
+        #expect(reopened.visible.map(\.status) == [.backlog])
+        reopened.queue = .done
+        #expect(reopened.visible.map(\.status) == [.done])
+        reopened.queue = .active
+        reopened.filters.statusSelection = []
+        #expect(reopened.visible.isEmpty)
+        reopened.filters = TaskFilters()
+        #expect(reopened.visible.map(\.status) == [.blocked, .todo, .active])
+    }
+
     @Test func oldPresetStillMatchesTasksAcrossOutcomes() throws {
         let data = Data("""
             [{"id":"A12BF316-348A-4EDB-A860-8671F9DDEFD2","name":"Urgent","search":"review",
@@ -143,6 +183,9 @@ struct FilterTests {
         #expect(preset.filters.includes(task))
         task.outcomeID = 12
         #expect(preset.filters.includes(task))
+        task.status = .done
+        #expect(!preset.filters.includes(task, in: .active))
+        #expect(preset.filters.includes(task, in: .done))
         task.priority = .medium
         #expect(!preset.filters.includes(task))
     }

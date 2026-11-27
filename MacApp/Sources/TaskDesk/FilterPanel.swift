@@ -32,8 +32,10 @@ struct FilterPanel: View {
                         Text("Off focus").tag(Optional(false))
                     }
                     outcomeChoices
-                    choices("Status", Status.allCases.filter { desk.queue.includes($0) || desk.filters.statuses.contains($0) },
-                            $desk.filters.statuses) { $0.rawValue }
+                    choices("Status", desk.queue.availableStatuses, Binding(
+                        get: { (desk.filters.statusSelection ?? desk.queue.defaultStatuses).intersection(desk.queue.availableStatuses) },
+                        set: { desk.filters.statusSelection = $0 == desk.queue.defaultStatuses ? nil : $0 }
+                    ), emptyLabel: "None") { $0.rawValue }
                     choices("Priority", Priority.allCases, $desk.filters.priorities) { $0.rawValue }
                     choices("Work type", GroupKind.allCases, $desk.filters.kinds) { $0.rawValue }
                     choices("Project / Customer", groups, $desk.filters.groups) { $0.name + " · " + $0.kind.rawValue }
@@ -62,7 +64,7 @@ struct FilterPanel: View {
     }
 
     private func choices<Value: Hashable>(_ title: String, _ options: [Value], _ selected: Binding<Set<Value>>,
-                                          label: @escaping (Value) -> String) -> some View {
+                                          emptyLabel: String = "Any", label: @escaping (Value) -> String) -> some View {
         DisclosureGroup(isExpanded: membership(title, in: $expanded)) {
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(options, id: \.self) { value in
@@ -74,7 +76,7 @@ struct FilterPanel: View {
             HStack {
                 Text(title).fontWeight(.medium)
                 Spacer()
-                Text(selected.wrappedValue.isEmpty ? "Any" : "\(selected.wrappedValue.count) selected")
+                Text(selected.wrappedValue.isEmpty ? emptyLabel : "\(selected.wrappedValue.count) selected")
                     .font(.caption).foregroundStyle(Ink.muted)
             }
         }

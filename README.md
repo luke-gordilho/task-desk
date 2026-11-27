@@ -6,7 +6,7 @@ Choose **Create task with AI** beside **New task** to open an editable prompt in
 
 Task Desk opens to **Tasks**. Task lists group matching tasks under their outcome, with **Unassigned tasks** last. Outcome headers show the project or customer, responsible people, due date, and priority. Sorting orders tasks within each group. To switch to a flat table, turn off **Sort → Group by outcome**. Task Desk remembers your choice.
 
-Use **Backlog** for work you want to defer. New tasks started there default to Backlog. Right-click a task and choose **Move to Backlog** to set it aside, or **Move to To do** to bring it back to **Tasks**. Finished work appears under **Completed**.
+Use **Backlog** for work you want to defer. New tasks started there default to Backlog. Right-click a task and choose **Move to Backlog** to set it aside, or **Move to To do** to bring it back to **Tasks**. Finished work appears under **Completed**. In **Tasks → Filter → Status**, select **Backlog** or **Done** to include either alongside active work. The default selection is **In progress**, **To do**, and **Blocked**.
 
 Open **Outcomes** in the sidebar to organize tasks around a shared result. Choose **New outcome**, enter a name, choose or enter its project or customer, pick a due date on the calendar, and set its priority. Select any existing tasks that contribute to it. Opening an outcome shows all its tasks, including completed work. Use **New task** there to preselect the outcome and project, or use **Edit outcome** to move several tasks in one save. A task can belong to one outcome at a time. The **Unassigned tasks** view includes tasks created before outcomes were added.
 

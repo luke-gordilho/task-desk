@@ -90,7 +90,9 @@ struct WorkspaceView: View {
         case .outcomes: return desk.outcomes.count
         case .inbox: return desk.proposals.filter { $0.state == .pending || $0.state == .approved }.count
         case .results: return desk.results.filter(\.unread).count
-        default: return desk.tasks.filter { queue.includes($0.status) }.count
+        default:
+            let statuses = queue == desk.queue ? desk.filters.statusSelection : nil
+            return desk.tasks.filter { queue.includes($0.status, selection: statuses) }.count
         }
     }
     private var sidebar: some View {
@@ -107,7 +109,7 @@ struct WorkspaceView: View {
                     if queue == .outcomes { desk.showOutcome(.overview) }
                     if desk.queue != queue {
                         desk.queue = queue
-                        desk.filters.statuses.removeAll()
+                        desk.filters.statusSelection = nil
                         desk.selection = nil
                     }
                 } label: {

@@ -1,7 +1,7 @@
 import Foundation
 
 public enum Status: String, Codable, CaseIterable {
-    case backlog = "Backlog", todo = "To do", active = "In progress", blocked = "Blocked", done = "Done"
+    case active = "In progress", todo = "To do", blocked = "Blocked", backlog = "Backlog", done = "Done"
 }
 public enum Priority: String, Codable, CaseIterable {
     case high = "High", medium = "Medium", low = "Low"

@@ -22,8 +22,21 @@ enum Queue: String, CaseIterable, Identifiable {
         case .todo, .active, .blocked: return .active
         }
     }
-    func includes(_ status: Status) -> Bool {
-        self == .outcomes || self == Self.taskQueue(for: status)
+    var availableStatuses: [Status] {
+        switch self {
+        case .active, .outcomes: return Status.allCases
+        case .backlog: return [.backlog]
+        case .done: return [.done]
+        case .inbox, .results: return []
+        }
+    }
+
+    var defaultStatuses: Set<Status> {
+        self == .active ? [.active, .todo, .blocked] : Set(availableStatuses)
+    }
+
+    func includes(_ status: Status, selection: Set<Status>? = nil) -> Bool {
+        availableStatuses.contains(status) && (selection ?? defaultStatuses).contains(status)
     }
 }
 extension WorkItem {
@@ -62,7 +75,7 @@ enum DeskSort: String, CaseIterable, Codable {
 }
 struct TaskFilters: Equatable, Codable {
     var focus: Bool?
-    var statuses: Set<Status> = []
+    var statusSelection: Set<Status>?
     var priorities: Set<Priority> = []
     var kinds: Set<GroupKind> = []
     var groups: Set<TaskGroup> = []
@@ -74,7 +87,14 @@ struct TaskFilters: Equatable, Codable {
     init(from decoder: Decoder) throws {
         let fields = try decoder.container(keyedBy: CodingKeys.self)
         focus = try fields.decodeIfPresent(Bool.self, forKey: .focus)
-        statuses = try fields.decode(Set<Status>.self, forKey: .statuses)
+        statusSelection = try fields.decodeIfPresent(Set<Status>.self, forKey: .statusSelection)
+        if statusSelection == nil {
+            // Older visualizations used an empty set for the queue's default.
+            let legacy = try decoder.container(keyedBy: LegacyStatusKey.self)
+            if let statuses = try legacy.decodeIfPresent(Set<Status>.self, forKey: .statuses), !statuses.isEmpty {
+                statusSelection = statuses
+            }
+        }
         priorities = try fields.decode(Set<Priority>.self, forKey: .priorities)
         kinds = try fields.decode(Set<GroupKind>.self, forKey: .kinds)
         groups = try fields.decode(Set<TaskGroup>.self, forKey: .groups)
@@ -82,11 +102,13 @@ struct TaskFilters: Equatable, Codable {
         outcomeIDs = try fields.decodeIfPresent(Set<Int?>.self, forKey: .outcomeIDs) ?? []
     }
 
-    var count: Int { statuses.count + priorities.count + kinds.count + groups.count + people.count + outcomeIDs.count + (focus == nil ? 0 : 1) }
+    private enum LegacyStatusKey: String, CodingKey { case statuses }
 
-    func includes(_ item: WorkItem) -> Bool {
+    var count: Int { (statusSelection.map { max(1, $0.count) } ?? 0) + priorities.count + kinds.count + groups.count + people.count + outcomeIDs.count + (focus == nil ? 0 : 1) }
+
+    func includes(_ item: WorkItem, in queue: Queue = .outcomes) -> Bool {
         (focus == nil || focus == item.focus)
-        && (statuses.isEmpty || statuses.contains(item.status))
+        && queue.includes(item.status, selection: statusSelection)
         && (priorities.isEmpty || priorities.contains(item.priority))
         && (kinds.isEmpty || kinds.contains(item.group.kind))
         && (outcomeIDs.isEmpty || outcomeIDs.contains(item.outcomeID))
@@ -243,7 +265,7 @@ enum OutcomeScope: Equatable {
     }
     var visible: [WorkItem] {
         tasks.filter { item in
-            guard queue.includes(item.status), filters.includes(item) else { return false }
+            guard filters.includes(item, in: queue) else { return false }
             if queue == .outcomes && (outcomeScope == .overview || item.outcomeID != outcomeScope.id) { return false }
             let words = [item.label, item.title, item.group.name, item.group.kind.rawValue, item.owner, item.context, item.latestUpdate] +
                 item.collaborators + item.actions.flatMap { [$0.title,$0.assignee] }
@@ -296,8 +318,12 @@ enum OutcomeScope: Equatable {
         let item = try store.save(draft, actor: "Luke")
         refresh()
         if queue == .outcomes { showOutcome(item.outcomeID.map(OutcomeScope.outcome) ?? .unassigned) }
-        if !queue.includes(item.status) { queue = Queue.taskQueue(for: item.status) }
-        if !filters.includes(item) { filters = TaskFilters() }
+        if !queue.includes(item.status, selection: filters.statusSelection) { queue = Queue.taskQueue(for: item.status) }
+        if !filters.includes(item, in: queue) {
+            let selection = filters.statusSelection
+            filters = TaskFilters()
+            if queue.includes(item.status, selection: selection) { filters.statusSelection = selection }
+        }
         if !visible.contains(where: { $0.id == item.id }) { search = "" }
         selection = item.id
         if detailID != nil { detailID = item.id }
